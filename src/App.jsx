@@ -373,7 +373,7 @@ function Onboarding({onComplete}){
       <p style={{fontSize:13,color:B.warmGrey,marginBottom:4,fontFamily:"system-ui,-apple-system,sans-serif"}}>1 of 5</p>
       <h2 style={{fontSize:28,fontWeight:700,color:B.nearBlack,letterSpacing:"-0.02em",marginBottom:8,lineHeight:1.2,fontFamily:"system-ui,-apple-system,sans-serif"}}>Tell us about<br/>your venue</h2>
       <p style={{fontSize:15,color:B.warmGrey,marginBottom:32,fontFamily:"system-ui,-apple-system,sans-serif"}}>This is what makes WageSave yours.</p>
-      <div style={{marginBottom:18}}><Label text="Venue name"/><input style={inputStyle} placeholder="e.g. Barry's Barwon Heads" value={data.name} onFocus={e=>e.target.style.borderColor=B.amber} onBlur={e=>e.target.style.borderColor=B.midGrey} onChange={e=>setData(d=>({...d,name:e.target.value}))}/></div>
+      <div style={{marginBottom:18}}><Label text="Venue name"/><input style={inputStyle} placeholder="e.g. Barry's" value={data.name} onFocus={e=>e.target.style.borderColor=B.amber} onBlur={e=>e.target.style.borderColor=B.midGrey} onChange={e=>setData(d=>({...d,name:e.target.value}))}/></div>
       <div style={{marginBottom:28}}><Label text="Suburb or town"/><input style={inputStyle} placeholder="e.g. Barwon Heads" value={data.suburb} onFocus={e=>e.target.style.borderColor=B.amber} onBlur={e=>e.target.style.borderColor=B.midGrey} onChange={e=>setData(d=>({...d,suburb:e.target.value}))}/></div>
       <div style={{marginBottom:24}}><Label text="Do you have a kitchen?"/><Toggle value={data.hasKitchen} onChange={v=>setData(d=>({...d,hasKitchen:v}))}/></div>
       <div style={{marginBottom:36}}><Label text="Do you serve alcohol?"/><Toggle value={data.servesAlcohol} onChange={v=>setData(d=>({...d,servesAlcohol:v}))}/></div>
