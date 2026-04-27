@@ -373,7 +373,7 @@ function Onboarding({onComplete}){
       <p style={{fontSize:13,color:B.warmGrey,marginBottom:4,fontFamily:"system-ui,-apple-system,sans-serif"}}>1 of 5</p>
       <h2 style={{fontSize:28,fontWeight:700,color:B.nearBlack,letterSpacing:"-0.02em",marginBottom:8,lineHeight:1.2,fontFamily:"system-ui,-apple-system,sans-serif"}}>Tell us about<br/>your venue</h2>
       <p style={{fontSize:15,color:B.warmGrey,marginBottom:32,fontFamily:"system-ui,-apple-system,sans-serif"}}>This is what makes WageSave yours.</p>
-      <div style={{marginBottom:18}}><Label text="Venue name"/><input style={inputStyle} placeholder="e.g. Barry's" value={data.name} onFocus={e=>e.target.style.borderColor=B.amber} onBlur={e=>e.target.style.borderColor=B.midGrey} onChange={e=>setData(d=>({...d,name:e.target.value}))}/></div>
+      <div style={{marginBottom:18}}><Label text="Venue name"/><input style={inputStyle} placeholder="e.g. Barry's Barwon Heads" value={data.name} onFocus={e=>e.target.style.borderColor=B.amber} onBlur={e=>e.target.style.borderColor=B.midGrey} onChange={e=>setData(d=>({...d,name:e.target.value}))}/></div>
       <div style={{marginBottom:28}}><Label text="Suburb or town"/><input style={inputStyle} placeholder="e.g. Barwon Heads" value={data.suburb} onFocus={e=>e.target.style.borderColor=B.amber} onBlur={e=>e.target.style.borderColor=B.midGrey} onChange={e=>setData(d=>({...d,suburb:e.target.value}))}/></div>
       <div style={{marginBottom:24}}><Label text="Do you have a kitchen?"/><Toggle value={data.hasKitchen} onChange={v=>setData(d=>({...d,hasKitchen:v}))}/></div>
       <div style={{marginBottom:36}}><Label text="Do you serve alcohol?"/><Toggle value={data.servesAlcohol} onChange={v=>setData(d=>({...d,servesAlcohol:v}))}/></div>
@@ -592,15 +592,15 @@ function DayDrawer({dayData,onActualChange,actual,feedback,onFeedback,onClose,ve
 }
 
 // ─── MAIN APP ────────────────────────────────────────────────────────────────
-function MainApp({venue}){
+function MainApp({venue, onReset}){
   const[weekOffset,setWeekOffset]=useState(0);
   const[selectedDay,setSelectedDay]=useState(null);
-  const[actual,setActual]=useState({});
-  const[feedback,setFeedback]=useState({});
+  const[actual,setActual]=useState(()=>{ try{const s=localStorage.getItem("wagesave_actual");return s?JSON.parse(s):{}}catch{return{}}});
+  const[feedback,setFeedback]=useState(()=>{ try{const s=localStorage.getItem("wagesave_feedback");return s?JSON.parse(s):{}}catch{return{}}});
   const[weather,setWeather]=useState(null);
   const[showSettings,setShowSettings]=useState(false);
-  const[showCsvNudge,setShowCsvNudge]=useState(true);
-  const[baseRevenue,setBaseRevenue]=useState(venue.baseRevenue||2500);
+  const[showCsvNudge,setShowCsvNudge]=useState(()=>{ try{return localStorage.getItem("wagesave_csv_dismissed")!=="true"}catch{return true}});
+  const[baseRevenue,setBaseRevenue]=useState(()=>{ try{const s=localStorage.getItem("wagesave_base_revenue");return s?Number(s):venue.baseRevenue||2500}catch{return venue.baseRevenue||2500}});
 
   useEffect(()=>{
     if(!navigator.geolocation) return;
@@ -609,6 +609,11 @@ function MainApp({venue}){
         .then(r=>r.json()).then(d=>{if(d.cod!==200)return;setWeather({...weatherFromCode(d.weather[0].id),temp:Math.round(d.main.temp),city:d.name});}).catch(()=>{});
     },()=>{},{timeout:8000});
   },[]);
+
+  // Persist state to localStorage
+  useEffect(()=>{try{localStorage.setItem("wagesave_actual",JSON.stringify(actual));}catch{}},[actual]);
+  useEffect(()=>{try{localStorage.setItem("wagesave_feedback",JSON.stringify(feedback));}catch{}},[feedback]);
+  useEffect(()=>{try{localStorage.setItem("wagesave_base_revenue",String(baseRevenue));}catch{}},[baseRevenue]);
 
   const weatherMult=weather?weather.mult:1.0;
   const weekDates=getWeekDates(weekOffset);
@@ -674,7 +679,7 @@ function MainApp({venue}){
               <p style={{fontSize:12,color:B.warmGrey,fontFamily:"system-ui,-apple-system,sans-serif"}}>Upload last year's sales CSV</p>
             </div>
             <button style={{padding:"6px 12px",borderRadius:8,background:B.amber,border:"none",color:B.white,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"system-ui,-apple-system,sans-serif"}}>Upload</button>
-            <button onClick={()=>setShowCsvNudge(false)} style={{fontSize:18,color:B.warmGrey,background:"none",border:"none",cursor:"pointer",lineHeight:1,padding:"0 4px"}}>×</button>
+            <button onClick={()=>{setShowCsvNudge(false);try{localStorage.setItem("wagesave_csv_dismissed","true");}catch{}}} style={{fontSize:18,color:B.warmGrey,background:"none",border:"none",cursor:"pointer",lineHeight:1,padding:"0 4px"}}>×</button>
           </div>
         )}
 
@@ -720,6 +725,9 @@ function MainApp({venue}){
             <div style={{marginTop:10,marginBottom:10}}><Stepper value={baseRevenue} onChange={setBaseRevenue} min={200} max={15000} step={100} prefix="$"/></div>
             <input type="range" min={200} max={15000} step={100} value={baseRevenue} onChange={e=>setBaseRevenue(Number(e.target.value))} style={{width:"100%"}}/>
             <p style={{fontSize:12,color:B.warmGrey,marginTop:8,fontFamily:"system-ui,-apple-system,sans-serif"}}>{calcRoles(baseRevenue,venue.hasKitchen,venue.servesAlcohol).note}</p>
+            <div style={{marginTop:16,paddingTop:16,borderTop:`1px solid ${B.lightGrey}`}}>
+              <button onClick={()=>{if(window.confirm("Reset WageSave and start over? All venue data will be cleared.")) onReset();}} style={{width:"100%",padding:"11px 0",borderRadius:12,border:`1.5px solid ${B.danger}`,background:"transparent",color:B.danger,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"system-ui,-apple-system,sans-serif"}}>Reset venue &amp; start over</button>
+            </div>
           </div>
         )}
 
@@ -823,7 +831,29 @@ function MainApp({venue}){
 
 // ─── ROOT ─────────────────────────────────────────────────────────────────────
 export default function WageSave(){
-  const[venue,setVenue]=useState(null);
-  if(!venue) return<Onboarding onComplete={setVenue}/>;
-  return<MainApp venue={venue}/>;
+  const[venue,setVenue]=useState(()=>{
+    try{const s=localStorage.getItem("wagesave_venue");return s?JSON.parse(s):null;}catch{return null;}
+  });
+  const[loading,setLoading]=useState(true);
+
+  useEffect(()=>setLoading(false),[]);
+
+  function handleComplete(v){
+    try{localStorage.setItem("wagesave_venue",JSON.stringify(v));}catch{}
+    setVenue(v);
+  }
+
+  function handleReset(){
+    try{["wagesave_venue","wagesave_actual","wagesave_feedback","wagesave_base_revenue","wagesave_csv_dismissed"].forEach(k=>localStorage.removeItem(k));}catch{}
+    setVenue(null);
+  }
+
+  if(loading) return(
+    <div style={{minHeight:"100vh",background:B.amberPale,display:"flex",alignItems:"center",justifyContent:"center"}}>
+      <Logo size={48}/>
+    </div>
+  );
+
+  if(!venue) return<Onboarding onComplete={handleComplete}/>;
+  return<MainApp venue={venue} onReset={handleReset}/>;
 }
