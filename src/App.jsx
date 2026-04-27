@@ -459,13 +459,13 @@ function Onboarding({onComplete}){
       <h2 style={{fontSize:28,fontWeight:700,color:B.nearBlack,letterSpacing:"-0.02em",marginBottom:8,lineHeight:1.2,fontFamily:"system-ui,-apple-system,sans-serif"}}>What does a typical<br/>day look like?</h2>
       <p style={{fontSize:15,color:B.warmGrey,marginBottom:32,lineHeight:1.5,fontFamily:"system-ui,-apple-system,sans-serif"}}>Your baseline for an average day. WageSave adjusts for day of week, weather, events and season.</p>
       <div style={{marginBottom:28}}>
-        <Label text="A quiet day"/>
+        <Label text={`A quiet ${new Date().toLocaleString("en-AU",{month:"long"})} day`}/>
         <div style={{marginTop:12,marginBottom:12}}><Stepper value={data.quietRevenue} onChange={v=>setData(d=>({...d,quietRevenue:v}))} min={200} max={8000} step={100} prefix="$"/></div>
         <input type="range" min={200} max={8000} step={100} value={data.quietRevenue} onChange={e=>setData(d=>({...d,quietRevenue:Number(e.target.value)}))} style={{width:"100%",accentColor:B.amber}}/>
         <p style={{fontSize:12,color:B.warmGrey,marginTop:6,fontFamily:"system-ui,-apple-system,sans-serif"}}>{calcRoles(data.quietRevenue,data.hasKitchen,data.servesAlcohol).note}</p>
       </div>
       <div style={{marginBottom:28}}>
-        <Label text="A busy day"/>
+        <Label text={`A busy ${new Date().toLocaleString("en-AU",{month:"long"})} day`}/>
         <div style={{marginTop:12,marginBottom:12}}><Stepper value={data.busyRevenue} onChange={v=>setData(d=>({...d,busyRevenue:v}))} min={1000} max={20000} step={100} prefix="$"/></div>
         <input type="range" min={1000} max={20000} step={100} value={data.busyRevenue} onChange={e=>setData(d=>({...d,busyRevenue:Number(e.target.value)}))} style={{width:"100%",accentColor:B.amber}}/>
         <p style={{fontSize:12,color:B.warmGrey,marginTop:6,fontFamily:"system-ui,-apple-system,sans-serif"}}>{calcRoles(data.busyRevenue,data.hasKitchen,data.servesAlcohol).note}</p>
