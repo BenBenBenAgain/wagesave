@@ -591,6 +591,137 @@ function DayDrawer({dayData,onActualChange,actual,feedback,onFeedback,onClose,ve
   );
 }
 
+// ─── VENUE SETTINGS ──────────────────────────────────────────────────────────
+function VenueSettings({venue, baseRevenue, onBaseRevenueChange, onVenueUpdate, onReset}){
+  const[local,setLocal]=useState({...venue});
+  const[saved,setSaved]=useState(false);
+
+  function updateHours(day,key,val){
+    setLocal(d=>({...d,tradingHours:{...d.tradingHours,[day]:{...d.tradingHours[day],[key]:val}}}));
+    setSaved(false);
+  }
+
+  function save(){
+    onVenueUpdate(local);
+    setSaved(true);
+  }
+
+  const sectionStyle={background:B.white,borderRadius:16,padding:20,marginBottom:12,boxShadow:"0 2px 16px rgba(28,21,16,0.07)"};
+  const rowStyle={display:"flex",alignItems:"center",justifyContent:"space-between",paddingBottom:12,marginBottom:12,borderBottom:`1px solid ${B.lightGrey}`};
+
+  return(
+    <div style={{marginBottom:20}}>
+
+      {/* Venue name & suburb */}
+      <div style={sectionStyle}>
+        <Label text="Venue"/>
+        <div style={{marginBottom:14}}>
+          <p style={{fontSize:11,color:B.warmGrey,marginBottom:6,fontFamily:"system-ui,-apple-system,sans-serif",textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:600}}>Name</p>
+          <input value={local.name} onChange={e=>{setLocal(d=>({...d,name:e.target.value}));setSaved(false);}}
+            style={{width:"100%",padding:"12px 14px",borderRadius:12,border:`1.5px solid ${B.midGrey}`,fontSize:15,fontFamily:"system-ui,-apple-system,sans-serif",color:B.nearBlack,background:B.white,outline:"none",boxSizing:"border-box"}}
+            onFocus={e=>e.target.style.borderColor=B.amber} onBlur={e=>e.target.style.borderColor=B.midGrey}/>
+        </div>
+        <div>
+          <p style={{fontSize:11,color:B.warmGrey,marginBottom:6,fontFamily:"system-ui,-apple-system,sans-serif",textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:600}}>Suburb</p>
+          <input value={local.suburb} onChange={e=>{setLocal(d=>({...d,suburb:e.target.value}));setSaved(false);}}
+            style={{width:"100%",padding:"12px 14px",borderRadius:12,border:`1.5px solid ${B.midGrey}`,fontSize:15,fontFamily:"system-ui,-apple-system,sans-serif",color:B.nearBlack,background:B.white,outline:"none",boxSizing:"border-box"}}
+            onFocus={e=>e.target.style.borderColor=B.amber} onBlur={e=>e.target.style.borderColor=B.midGrey}/>
+        </div>
+      </div>
+
+      {/* Kitchen & alcohol */}
+      <div style={sectionStyle}>
+        <Label text="Venue type"/>
+        <div style={{...rowStyle,borderBottom:"none",paddingBottom:0,marginBottom:12}}>
+          <p style={{fontSize:14,fontWeight:600,color:B.nearBlack,fontFamily:"system-ui,-apple-system,sans-serif"}}>Kitchen</p>
+          <div style={{display:"flex",gap:8}}>
+            {["Yes","No"].map(opt=>{
+              const active=(local.hasKitchen&&opt==="Yes")||(!local.hasKitchen&&opt==="No");
+              return<button key={opt} onClick={()=>{setLocal(d=>({...d,hasKitchen:opt==="Yes"}));setSaved(false);}} style={{padding:"7px 18px",borderRadius:100,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"system-ui,-apple-system,sans-serif",border:`1.5px solid ${active?B.amber:B.midGrey}`,background:active?B.amberLight:"transparent",color:active?B.amberDark:B.warmGrey,transition:"all 0.15s"}}>{opt}</button>;
+            })}
+          </div>
+        </div>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+          <p style={{fontSize:14,fontWeight:600,color:B.nearBlack,fontFamily:"system-ui,-apple-system,sans-serif"}}>Alcohol</p>
+          <div style={{display:"flex",gap:8}}>
+            {["Yes","No"].map(opt=>{
+              const active=(local.servesAlcohol&&opt==="Yes")||(!local.servesAlcohol&&opt==="No");
+              return<button key={opt} onClick={()=>{setLocal(d=>({...d,servesAlcohol:opt==="Yes"}));setSaved(false);}} style={{padding:"7px 18px",borderRadius:100,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"system-ui,-apple-system,sans-serif",border:`1.5px solid ${active?B.amber:B.midGrey}`,background:active?B.amberLight:"transparent",color:active?B.amberDark:B.warmGrey,transition:"all 0.15s"}}>{opt}</button>;
+            })}
+          </div>
+        </div>
+      </div>
+
+      {/* Seasonality */}
+      <div style={sectionStyle}>
+        <Label text="Seasonality"/>
+        <div style={{display:"flex",flexDirection:"column",gap:8}}>
+          {[
+            {key:"summer",icon:"☀️",label:"Busier in summer"},
+            {key:"winter", icon:"🏔",label:"Busier in winter"},
+            {key:"flat",   icon:"📅",label:"Consistent year round"},
+          ].map(opt=>{
+            const active=local.seasonality===opt.key;
+            return<button key={opt.key} onClick={()=>{setLocal(d=>({...d,seasonality:opt.key}));setSaved(false);}} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 14px",borderRadius:12,border:`1.5px solid ${active?B.amber:B.midGrey}`,background:active?B.amberLight:B.white,cursor:"pointer",textAlign:"left",transition:"all 0.15s"}}>
+              <span style={{fontSize:18}}>{opt.icon}</span>
+              <span style={{fontSize:14,fontWeight:600,color:active?B.amberDark:B.nearBlack,fontFamily:"system-ui,-apple-system,sans-serif"}}>{opt.label}</span>
+              {active&&<span style={{marginLeft:"auto",color:B.amber,fontSize:16}}>✓</span>}
+            </button>;
+          })}
+        </div>
+      </div>
+
+      {/* Revenue baseline */}
+      <div style={sectionStyle}>
+        <Label text={`Revenue baseline — ${new Date().toLocaleString("en-AU",{month:"long"})}`}/>
+        <div style={{marginTop:8,marginBottom:8}}><Stepper value={baseRevenue} onChange={v=>{onBaseRevenueChange(v);setSaved(false);}} min={200} max={15000} step={100} prefix="$"/></div>
+        <input type="range" min={200} max={15000} step={100} value={baseRevenue} onChange={e=>{onBaseRevenueChange(Number(e.target.value));setSaved(false);}} style={{width:"100%",accentColor:B.amber}}/>
+        <p style={{fontSize:12,color:B.warmGrey,marginTop:6,fontFamily:"system-ui,-apple-system,sans-serif"}}>{calcRoles(baseRevenue,local.hasKitchen,local.servesAlcohol).note}</p>
+      </div>
+
+      {/* Trading hours */}
+      <div style={sectionStyle}>
+        <Label text="Trading hours"/>
+        {DAYS.map(day=>{
+          const h=local.tradingHours[day];
+          return(
+            <div key={day} style={{marginBottom:12,background:B.amberPale,borderRadius:12,padding:14,border:`1px solid ${h.open?B.lightGrey:B.midGrey}`}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:h.open?12:0}}>
+                <p style={{fontSize:14,fontWeight:700,color:B.nearBlack,fontFamily:"system-ui,-apple-system,sans-serif"}}>{day}</p>
+                <button onClick={()=>updateHours(day,"open",!h.open)} style={{padding:"5px 12px",borderRadius:100,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"system-ui,-apple-system,sans-serif",border:`1.5px solid ${h.open?B.amber:B.midGrey}`,background:h.open?B.amberLight:"transparent",color:h.open?B.amberDark:B.warmGrey,transition:"all 0.15s"}}>{h.open?"Open":"Closed"}</button>
+              </div>
+              {h.open&&(
+                <>
+                  <div style={{display:"flex",gap:10,marginBottom:10}}>
+                    <TimeSelect label="Opens" value={h.openTime} onChange={v=>updateHours(day,"openTime",v)}/>
+                    <TimeSelect label="Closes" value={h.closeTime} onChange={v=>updateHours(day,"closeTime",v)}/>
+                  </div>
+                  <button onClick={()=>updateHours(day,"hasDinner",!h.hasDinner)} style={{padding:"6px 12px",borderRadius:100,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"system-ui,-apple-system,sans-serif",border:`1.5px solid ${h.hasDinner?B.amber:B.midGrey}`,background:h.hasDinner?B.amberLight:"transparent",color:h.hasDinner?B.amberDark:B.warmGrey,transition:"all 0.15s"}}>🌙 Dinner service</button>
+                  {h.hasDinner&&<div style={{display:"flex",gap:10,marginTop:10}}><TimeSelect label="Dinner opens" value={h.dinnerOpen} onChange={v=>updateHours(day,"dinnerOpen",v)}/><TimeSelect label="Dinner closes" value={h.dinnerClose} onChange={v=>updateHours(day,"dinnerClose",v)}/></div>}
+                </>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Save button */}
+      <div style={{marginBottom:12}}>
+        {saved?(
+          <div style={{background:B.successLight,borderRadius:14,padding:"14px 0",textAlign:"center"}}>
+            <p style={{fontSize:15,fontWeight:600,color:B.success,fontFamily:"system-ui,-apple-system,sans-serif"}}>✓ Settings saved</p>
+          </div>
+        ):(
+          <button onClick={save} style={{width:"100%",padding:"16px 0",background:B.amber,color:B.white,border:"none",borderRadius:14,fontSize:16,fontWeight:700,cursor:"pointer",fontFamily:"system-ui,-apple-system,sans-serif",boxShadow:`0 4px 16px rgba(232,160,32,0.3)`}}>Save changes</button>
+        )}
+      </div>
+
+      {/* Reset */}
+      <button onClick={()=>{if(window.confirm("Reset WageSave and start over? All venue data will be cleared.")) onReset();}} style={{width:"100%",padding:"11px 0",borderRadius:12,border:`1.5px solid ${B.danger}`,background:"transparent",color:B.danger,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"system-ui,-apple-system,sans-serif"}}>Reset venue &amp; start over</button>
+    </div>
+  );
+}
+
 // ─── MAIN APP ────────────────────────────────────────────────────────────────
 function MainApp({venue, onReset}){
   const[weekOffset,setWeekOffset]=useState(0);
@@ -720,15 +851,17 @@ function MainApp({venue, onReset}){
 
         {/* Settings */}
         {showSettings&&(
-          <div style={{background:B.white,borderRadius:20,padding:20,marginBottom:20,boxShadow:"0 2px 16px rgba(28,21,16,0.07)"}}>
-            <Label text="Baseline daily revenue"/>
-            <div style={{marginTop:10,marginBottom:10}}><Stepper value={baseRevenue} onChange={setBaseRevenue} min={200} max={15000} step={100} prefix="$"/></div>
-            <input type="range" min={200} max={15000} step={100} value={baseRevenue} onChange={e=>setBaseRevenue(Number(e.target.value))} style={{width:"100%"}}/>
-            <p style={{fontSize:12,color:B.warmGrey,marginTop:8,fontFamily:"system-ui,-apple-system,sans-serif"}}>{calcRoles(baseRevenue,venue.hasKitchen,venue.servesAlcohol).note}</p>
-            <div style={{marginTop:16,paddingTop:16,borderTop:`1px solid ${B.lightGrey}`}}>
-              <button onClick={()=>{if(window.confirm("Reset WageSave and start over? All venue data will be cleared.")) onReset();}} style={{width:"100%",padding:"11px 0",borderRadius:12,border:`1.5px solid ${B.danger}`,background:"transparent",color:B.danger,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"system-ui,-apple-system,sans-serif"}}>Reset venue &amp; start over</button>
-            </div>
-          </div>
+          <VenueSettings
+            venue={venue}
+            baseRevenue={baseRevenue}
+            onBaseRevenueChange={setBaseRevenue}
+            onVenueUpdate={v=>{
+              const updated={...venue,...v};
+              try{localStorage.setItem("wagesave_venue",JSON.stringify(updated));}catch{}
+              window.location.reload();
+            }}
+            onReset={onReset}
+          />
         )}
 
         {/* Week nav */}
