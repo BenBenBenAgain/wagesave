@@ -69,6 +69,56 @@ const VIC_HOLIDAYS = {
   "2026-12-28":"Boxing Day (substitute)",
 };
 
+// ─── VIC SCHOOL HOLIDAYS 2026 ────────────────────────────────────────────────
+// Each entry is [start, end] inclusive
+const VIC_SCHOOL_HOLIDAYS_2026 = [
+  ["2026-01-01","2026-01-27"],  // Summer holidays
+  ["2026-03-28","2026-04-13"],  // Easter / Term 1 break
+  ["2026-06-27","2026-07-13"],  // Winter holidays
+  ["2026-09-19","2026-10-05"],  // Spring holidays
+  ["2026-12-19","2026-12-31"],  // Summer holidays start
+];
+
+function isSchoolHoliday(date) {
+  const dk = dateKey(date);
+  return VIC_SCHOOL_HOLIDAYS_2026.some(([start, end]) => dk >= start && dk <= end);
+}
+
+function isLongWeekend(date) {
+  const dk = dateKey(date);
+  const dow = date.getDay(); // 0=Sun, 1=Mon, 5=Fri, 6=Sat
+  // Check if adjacent to a public holiday
+  const prev = new Date(date); prev.setDate(date.getDate()-1);
+  const next = new Date(date); next.setDate(date.getDate()+1);
+  const prevKey = dateKey(prev);
+  const nextKey = dateKey(next);
+  // Friday before a Monday public holiday
+  if (dow === 5 && VIC_HOLIDAYS[nextKey + "skip"] === undefined && isHolidayKey(nextKey) === false) {
+    const mon = new Date(date); mon.setDate(date.getDate()+3);
+    if (VIC_HOLIDAYS[dateKey(mon)]) return true;
+  }
+  // Friday before a Monday holiday (standard long weekend)
+  if (dow === 5) {
+    const sat = new Date(date); sat.setDate(date.getDate()+1);
+    const sun = new Date(date); sun.setDate(date.getDate()+2);
+    const mon = new Date(date); mon.setDate(date.getDate()+3);
+    if (VIC_HOLIDAYS[dateKey(mon)]) return true;
+  }
+  // Saturday or Sunday of a long weekend
+  if (dow === 6 || dow === 0) {
+    const mon = new Date(date);
+    mon.setDate(date.getDate() + (dow === 6 ? 2 : 1));
+    if (VIC_HOLIDAYS[dateKey(mon)]) return true;
+  }
+  // Tuesday after a Monday holiday
+  if (dow === 2 && VIC_HOLIDAYS[prevKey]) return true;
+  return false;
+}
+
+function isHolidayKey(dk) {
+  return !!VIC_HOLIDAYS[dk];
+}
+
 const DEMO_EVENTS = {
   "2026-04-17":[{icon:"🏉",label:"AFL Round 4",impact:"+20%",mult:1.20}],
   "2026-04-18":[{icon:"☀️",label:"Warm weekend",impact:"+12%",mult:1.12}],
@@ -499,6 +549,8 @@ function DayDrawer({dayData,onActualChange,actual,feedback,onFeedback,onClose,ve
   const events=getEvents(date);
   const flags=[...events];
   if(holiday) flags.unshift({icon:"🎉",label:holiday,impact:"+25%"});
+  if(isSchoolHoliday(date)&&!holiday) flags.push({icon:"🏫",label:"School holidays",impact:"+15%"});
+  if(isLongWeekend(date)&&!holiday) flags.push({icon:"📅",label:"Long weekend",impact:"+20%"});
   const diff=actual>0?actual-roles.total:0;
   const waste=diff>0?diff*8*29:0;
   const isPast=new Date(date)<new Date(new Date().setHours(0,0,0,0));
@@ -764,6 +816,8 @@ function MainApp({venue, onReset}){
     const holiday=getHoliday(date);
     const flags=[...events];
     if(holiday) flags.unshift({icon:"🎉",label:holiday,impact:"+25%",mult:1.25});
+    if(isSchoolHoliday(date)&&!holiday) flags.push({icon:"🏫",label:"School holidays",impact:"+15%",mult:1.15});
+    if(isLongWeekend(date)&&!holiday) flags.push({icon:"📅",label:"Long weekend",impact:"+20%",mult:1.20});
     const eventMult=flags.reduce((acc,f)=>{const p=parseFloat((f.impact||"0").replace("%",""))/100;return acc*(1+p);},1.0);
     const dayData=calcDay(day,baseRevenue,venue.hasKitchen,venue.servesAlcohol,venue.tradingHours,venue.seasonality,weatherMult,eventMult,weekVar,date);
     return{day,date,flags,...dayData};
