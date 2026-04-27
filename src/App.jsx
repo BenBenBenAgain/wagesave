@@ -50,7 +50,11 @@ const DAY_MULT = {Mon:0.72,Tue:0.78,Wed:0.88,Thu:0.95,Fri:1.22,Sat:1.35,Sun:1.08
 const WEEK_VARIANCE = [1.0,0.93,1.08,0.97,1.12,0.89,1.05,0.98,1.14,0.91,1.03,0.96,1.10,0.86];
 
 // Seasonal multipliers by month (Jan=0 ... Dec=11)
-const SEASON_MULT_SUMMER = [1.45,1.40,1.15,1.0,0.85,0.75,0.70,0.72,0.80,0.95,1.15,1.40];
+// Summer multipliers tuned from Barry's real Square data:
+// Jan avg ~$5,300/day vs Apr avg ~$1,670/day = 3.17x
+// Jan=3.2, Feb=2.8, Mar=1.8, Apr=1.0(baseline), May=0.85, Jun=0.72,
+// Jul=0.68, Aug=0.70, Sep=0.80, Oct=0.95, Nov=1.40, Dec=2.80
+const SEASON_MULT_SUMMER = [3.20,2.80,1.80,1.0,0.85,0.72,0.68,0.70,0.80,0.95,1.40,2.80];
 const SEASON_MULT_WINTER  = [0.75,0.78,0.88,0.95,1.05,1.20,1.30,1.25,1.10,0.95,0.85,0.80];
 const SEASON_MULT_FLAT    = [1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0];
 
@@ -251,7 +255,18 @@ function calcDay(day, baseRev, hasKitchen, servesAlcohol, tradingHours, seasonal
   const byHour = curve.map(v=>sum>0?Math.max(0,Math.round((v/sum)*totalHours)):0);
   const roles = calcRoles(adj, hasKitchen, servesAlcohol);
   const shifts = calcShifts(roles, h);
-  return {adj, laborBudget, byHour, roles, shifts, closed:false, seasonMult};
+
+  // Peak cover — max staff needed at any single hour
+  const peakCover = Math.max(...byHour.filter((_,i) => curve[i]>0), 0);
+
+  // Total shift count — number of individual shifts (may be more than peak cover)
+  // Each role slot = one shift, but kitchen may split = extra shift
+  const totalShifts = shifts.length;
+
+  // Total labour hours across all shifts
+  const totalLabourHours = shifts.reduce((sum, s) => sum + (s.end - s.start), 0);
+
+  return {adj, laborBudget, byHour, roles, shifts, peakCover, totalShifts, totalLabourHours, closed:false, seasonMult};
 }
 
 function weatherFromCode(code){
@@ -551,7 +566,8 @@ function DayDrawer({dayData,onActualChange,actual,feedback,onFeedback,onClose,ve
   if(holiday) flags.unshift({icon:"🎉",label:holiday,impact:"+25%"});
   if(isSchoolHoliday(date)&&!holiday) flags.push({icon:"🏫",label:"School holidays",impact:"+15%"});
   if(isLongWeekend(date)&&!holiday) flags.push({icon:"📅",label:"Long weekend",impact:"+20%"});
-  const diff=actual>0?actual-roles.total:0;
+  const peakForComparison = dayData.peakCover||roles.total;
+  const diff=actual>0?actual-peakForComparison:0;
   const waste=diff>0?diff*8*29:0;
   const isPast=new Date(date)<new Date(new Date().setHours(0,0,0,0));
 
@@ -573,8 +589,28 @@ function DayDrawer({dayData,onActualChange,actual,feedback,onFeedback,onClose,ve
             </div>
           ):(
             <>
-              <p style={{fontSize:56,fontWeight:700,color:B.amber,lineHeight:1,fontFamily:"system-ui,-apple-system,sans-serif"}}>{roles.total}<span style={{fontSize:18,color:B.warmGrey,fontWeight:400,marginLeft:8}}>staff needed</span></p>
-              <p style={{fontSize:13,color:B.warmGrey,marginTop:4,marginBottom:20,fontFamily:"system-ui,-apple-system,sans-serif"}}>{roles.note}</p>
+              {/* Peak cover — the hero number */}
+              <div style={{marginBottom:20}}>
+                <p style={{fontSize:56,fontWeight:700,color:B.amber,lineHeight:1,fontFamily:"system-ui,-apple-system,sans-serif"}}>
+                  {dayData.peakCover||roles.total}
+                  <span style={{fontSize:18,color:B.warmGrey,fontWeight:400,marginLeft:8}}>peak at once</span>
+                </p>
+                <p style={{fontSize:13,color:B.warmGrey,marginTop:4,fontFamily:"system-ui,-apple-system,sans-serif"}}>{roles.note}</p>
+              </div>
+
+              {/* Shift spread */}
+              <div style={{display:"flex",gap:10,marginBottom:20}}>
+                <div style={{flex:1,background:B.amberPale,borderRadius:12,padding:"12px 14px"}}>
+                  <Label text="Shifts across day"/>
+                  <p style={{fontSize:22,fontWeight:700,color:B.nearBlack,fontFamily:"system-ui,-apple-system,sans-serif"}}>{dayData.totalShifts||roles.total}</p>
+                  <p style={{fontSize:11,color:B.warmGrey,fontFamily:"system-ui,-apple-system,sans-serif"}}>people on roster</p>
+                </div>
+                <div style={{flex:1,background:B.amberPale,borderRadius:12,padding:"12px 14px"}}>
+                  <Label text="Total labour hrs"/>
+                  <p style={{fontSize:22,fontWeight:700,color:B.nearBlack,fontFamily:"system-ui,-apple-system,sans-serif"}}>{dayData.totalLabourHours||0}h</p>
+                  <p style={{fontSize:11,color:B.warmGrey,fontFamily:"system-ui,-apple-system,sans-serif"}}>${Math.round((dayData.totalLabourHours||0)*29)} est. wages</p>
+                </div>
+              </div>
 
               <div style={{display:"flex",gap:12,marginBottom:20}}>
                 <div style={{flex:1,background:B.amberPale,borderRadius:14,padding:14}}><Label text="Predicted revenue"/><p style={{fontSize:20,fontWeight:700,color:B.nearBlack,fontFamily:"system-ui,-apple-system,sans-serif"}}>${Math.round(adj).toLocaleString()}</p></div>
@@ -825,7 +861,7 @@ function MainApp({venue, onReset}){
 
   const openDays=weekData.filter(d=>!d.closed);
   const totalRev=openDays.reduce((a,d)=>a+d.adj,0);
-  const totalStaff=openDays.reduce((a,d)=>a+d.roles.total,0);
+  const totalStaff=openDays.reduce((a,d)=>a+(d.totalShifts||d.roles.total),0);
   const totalBudget=openDays.reduce((a,d)=>a+d.laborBudget,0);
   const selectedData=selectedDay?weekData.find(d=>d.day===selectedDay):null;
 
@@ -942,12 +978,13 @@ function MainApp({venue, onReset}){
 
         {/* Day cards */}
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-          {weekData.map(({day,date,roles,adj,flags,byHour,closed},idx)=>{
+          {weekData.map((dayData,idx)=>{
+            const {day,date,roles,adj,flags,byHour,closed}=dayData;
             const dateN=new Date(date); dateN.setHours(0,0,0,0);
             const isToday=dateN.getTime()===today.getTime();
             const isPast=dateN<today;
             const act=actual[day]||0;
-            const diff=act>0?act-roles.total:0;
+            const diff=act>0?act-(dayData.peakCover||roles.total):0;
             const fb=feedback[`${day}-${dateKey(date)}`];
 
             return(
@@ -966,8 +1003,11 @@ function MainApp({venue, onReset}){
                   <p style={{fontSize:18,color:B.midGrey,fontWeight:600,fontFamily:"system-ui,-apple-system,sans-serif",marginTop:8}}>Closed</p>
                 ):(
                   <>
-                    <p style={{fontSize:40,fontWeight:700,color:B.amber,lineHeight:1,fontFamily:"system-ui,-apple-system,sans-serif"}}>{roles.total}</p>
-                    <p style={{fontSize:11,color:B.warmGrey,marginTop:2,marginBottom:6,fontFamily:"system-ui,-apple-system,sans-serif"}}>staff needed</p>
+                    <p style={{fontSize:40,fontWeight:700,color:B.amber,lineHeight:1,fontFamily:"system-ui,-apple-system,sans-serif"}}>
+                      {dayData.peakCover||roles.total}
+                    </p>
+                    <p style={{fontSize:11,color:B.warmGrey,marginTop:2,marginBottom:2,fontFamily:"system-ui,-apple-system,sans-serif"}}>peak at once</p>
+                    <p style={{fontSize:11,color:B.midGrey,marginBottom:6,fontFamily:"system-ui,-apple-system,sans-serif"}}>{dayData.totalShifts||roles.total} shifts across the day</p>
                     <p style={{fontSize:11,color:B.warmGrey,marginBottom:6,lineHeight:1.5,fontFamily:"system-ui,-apple-system,sans-serif"}}>{roles.roles.map(r=>`${r.count}× ${r.role}`).join(" · ")}</p>
                     <p style={{fontSize:13,color:B.warmGrey,fontWeight:500,fontFamily:"system-ui,-apple-system,sans-serif"}}>${adj>=1000?`${(adj/1000).toFixed(1)}k`:Math.round(adj)}</p>
 
