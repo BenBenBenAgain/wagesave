@@ -419,62 +419,108 @@ function FeedbackPanel({feedback, onSave}){
 
 // ─── DUAL RANGE SLIDER ───────────────────────────────────────────────────────
 function RangeSlider({min, max, low, high, onChange, step=100}){
-  const trackRef = useRef(null);
+  const containerRef = useRef(null);
+  // Use internal state for smooth visual during drag
+  const [internalLow,  setInternalLow]  = useState(low);
+  const [internalHigh, setInternalHigh] = useState(high);
+  const dragging = useRef(null);
 
-  function getPercent(val){ return Math.round(((val-min)/(max-min))*100); }
+  // Sync if parent changes
+  useEffect(()=>{ setInternalLow(low);  },[low]);
+  useEffect(()=>{ setInternalHigh(high);},[high]);
 
-  function handleTrackClick(e){
-    if(!trackRef.current) return;
-    const rect = trackRef.current.getBoundingClientRect();
-    const pct = (e.clientX - rect.left) / rect.width;
-    const val = Math.round((min + pct*(max-min)) / step) * step;
-    const midpoint = (low+high)/2;
-    if(val < midpoint) onChange(Math.min(val, high-step), high);
-    else onChange(low, Math.max(val, low+step));
+  function snap(val){ return Math.round(val/step)*step; }
+  function clamp(val,lo,hi){ return Math.min(Math.max(val,lo),hi); }
+  function toPct(val){ return ((val-min)/(max-min))*100; }
+
+  function valFromX(clientX){
+    if(!containerRef.current) return null;
+    const rect = containerRef.current.getBoundingClientRect();
+    return snap(clamp(min + clamp((clientX-rect.left)/rect.width,0,1)*(max-min), min, max));
   }
 
-  const lowPct = getPercent(low);
-  const highPct = getPercent(high);
+  function startDrag(handle, e){
+    e.preventDefault();
+    e.stopPropagation();
+    dragging.current = handle;
+
+    function move(ev){
+      const clientX = ev.touches ? ev.touches[0].clientX : ev.clientX;
+      const val = valFromX(clientX);
+      if(val===null) return;
+      // Update internal state only — fast, no parent re-render
+      if(dragging.current==="low")  setInternalLow(v  => clamp(val, min, internalHigh-step));
+      if(dragging.current==="high") setInternalHigh(v => clamp(val, internalLow+step, max));
+    }
+
+    function end(ev){
+      const clientX = ev.changedTouches ? ev.changedTouches[0].clientX : ev.clientX;
+      const val = valFromX(clientX);
+      dragging.current = null;
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", end);
+      window.removeEventListener("touchmove", move);
+      window.removeEventListener("touchend", end);
+      // Only call onChange once at the end
+      if(val!==null){
+        const finalLow  = handle==="low"  ? clamp(val,min,high-step)  : internalLow;
+        const finalHigh = handle==="high" ? clamp(val,low+step,max)   : internalHigh;
+        onChange(finalLow, finalHigh);
+      }
+    }
+
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", end);
+    window.addEventListener("touchmove", move, {passive:false});
+    window.addEventListener("touchend", end);
+  }
+
+  function clickTrack(e){
+    if(dragging.current) return;
+    const val = valFromX(e.clientX);
+    if(val===null) return;
+    const distLow  = Math.abs(val-internalLow);
+    const distHigh = Math.abs(val-internalHigh);
+    if(distLow<=distHigh){
+      const newLow = clamp(val,min,internalHigh-step);
+      setInternalLow(newLow);
+      onChange(newLow, internalHigh);
+    } else {
+      const newHigh = clamp(val,internalLow+step,max);
+      setInternalHigh(newHigh);
+      onChange(internalLow, newHigh);
+    }
+  }
+
+  const lowPct  = toPct(internalLow);
+  const highPct = toPct(internalHigh);
+  const handle  = {
+    position:"absolute",top:"50%",
+    width:26,height:26,borderRadius:"50%",
+    background:B.amber,border:"3px solid white",
+    boxShadow:"0 2px 8px rgba(232,160,32,0.45)",
+    cursor:"grab",zIndex:3,touchAction:"none",
+    transform:"translate(-50%,-50%)",
+  };
 
   return(
-    <div style={{position:"relative",height:36,display:"flex",alignItems:"center",userSelect:"none"}}>
+    <div ref={containerRef} onClick={clickTrack}
+      style={{position:"relative",height:44,userSelect:"none",touchAction:"none",cursor:"pointer"}}>
       {/* Track */}
-      <div ref={trackRef} onClick={handleTrackClick} style={{
-        position:"absolute",left:0,right:0,height:4,
-        background:B.lightGrey,borderRadius:2,cursor:"pointer",
-      }}>
-        {/* Active range fill */}
-        <div style={{
-          position:"absolute",
-          left:`${lowPct}%`,
-          width:`${highPct-lowPct}%`,
-          height:"100%",background:B.amber,borderRadius:2,
-        }}/>
+      <div style={{position:"absolute",top:"50%",left:0,right:0,
+        height:4,background:B.lightGrey,borderRadius:2,transform:"translateY(-50%)"}}>
+        <div style={{position:"absolute",left:`${lowPct}%`,
+          width:`${highPct-lowPct}%`,height:"100%",
+          background:B.amber,borderRadius:2}}/>
       </div>
-
       {/* Low handle */}
-      <input type="range" min={min} max={high-step} step={step} value={low}
-        onChange={e=>onChange(Number(e.target.value), high)}
-        style={{
-          position:"absolute",left:0,right:0,width:"100%",
-          WebkitAppearance:"none",appearance:"none",
-          background:"transparent",outline:"none",
-          height:4,pointerEvents:"none",
-        }}
-        onMouseDown={e=>e.stopPropagation()}
-      />
-
+      <div style={{...handle,left:`${lowPct}%`}}
+        onMouseDown={e=>startDrag("low",e)}
+        onTouchStart={e=>startDrag("low",e)}/>
       {/* High handle */}
-      <input type="range" min={low+step} max={max} step={step} value={high}
-        onChange={e=>onChange(low, Number(e.target.value))}
-        style={{
-          position:"absolute",left:0,right:0,width:"100%",
-          WebkitAppearance:"none",appearance:"none",
-          background:"transparent",outline:"none",
-          height:4,pointerEvents:"none",
-        }}
-        onMouseDown={e=>e.stopPropagation()}
-      />
+      <div style={{...handle,left:`${highPct}%`}}
+        onMouseDown={e=>startDrag("high",e)}
+        onTouchStart={e=>startDrag("high",e)}/>
     </div>
   );
 }
