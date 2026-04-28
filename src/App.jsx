@@ -256,11 +256,12 @@ function calcDay(day, baseRev, hasKitchen, servesAlcohol, tradingHours, seasonal
   const roles = calcRoles(adj, hasKitchen, servesAlcohol);
   const shifts = calcShifts(roles, h);
 
-  // Peak cover — max staff needed at any single hour
-  const peakCover = Math.max(...byHour.filter((_,i) => curve[i]>0), 0);
+  // Peak cover — max staff on floor at any one time
+  // Derived from roles model: total roles active at peak service period
+  // Kitchen splits don't count twice — only roles active simultaneously
+  const peakCover = roles.total;
 
-  // Total shift count — number of individual shifts (may be more than peak cover)
-  // Each role slot = one shift, but kitchen may split = extra shift
+  // Total shift count — may be more than peak cover due to split shifts and staggering
   const totalShifts = shifts.length;
 
   // Total labour hours across all shifts
