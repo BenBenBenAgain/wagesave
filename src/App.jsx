@@ -426,6 +426,7 @@ function Onboarding({onComplete}){
     busyPeriods:[],bigDays:[],
     quietRevenue:1200,busyRevenue:4500,
     tradingHours:{...DEFAULT_HOURS},
+    dayRevenue:JSON.parse(JSON.stringify(DEFAULT_DAY_REVENUE)),
   });
 
   const inputStyle={width:"100%",padding:"15px 16px",borderRadius:14,border:`1.5px solid ${B.midGrey}`,fontSize:16,fontFamily:"system-ui,-apple-system,sans-serif",color:B.nearBlack,background:B.white,outline:"none",boxSizing:"border-box",transition:"border-color 0.15s"};
@@ -433,7 +434,6 @@ function Onboarding({onComplete}){
   function finish(){onComplete({
     ...data,
     baseRevenue:Math.round((data.quietRevenue+data.busyRevenue)/2),
-    dayRevenue:{...DEFAULT_DAY_REVENUE},
   });}
 
   const steps=[
@@ -534,24 +534,44 @@ function Onboarding({onComplete}){
       <AmberBtn label="Next →" onClick={()=>setStep(5)}/>
     </div>,
 
-    // 5: Revenue
+    // 5: Per-day revenue sliders
     <div key={5}>
       <p style={{fontSize:13,color:B.warmGrey,marginBottom:4,fontFamily:"system-ui,-apple-system,sans-serif"}}>5 of 5</p>
-      <h2 style={{fontSize:28,fontWeight:700,color:B.nearBlack,letterSpacing:"-0.02em",marginBottom:8,lineHeight:1.2,fontFamily:"system-ui,-apple-system,sans-serif"}}>What does a typical<br/>day look like?</h2>
-      <p style={{fontSize:15,color:B.warmGrey,marginBottom:32,lineHeight:1.5,fontFamily:"system-ui,-apple-system,sans-serif"}}>Your baseline for an average day. WageSave adjusts for day of week, weather, events and season.</p>
-      <div style={{marginBottom:28}}>
-        <Label text={`A quiet ${new Date().toLocaleString("en-AU",{month:"long"})} day`}/>
-        <div style={{marginTop:12,marginBottom:12}}><Stepper value={data.quietRevenue} onChange={v=>setData(d=>({...d,quietRevenue:v}))} min={200} max={8000} step={100} prefix="$"/></div>
-        <input type="range" min={200} max={8000} step={100} value={data.quietRevenue} onChange={e=>setData(d=>({...d,quietRevenue:Number(e.target.value)}))} style={{width:"100%",accentColor:B.amber}}/>
-        <p style={{fontSize:12,color:B.warmGrey,marginTop:6,fontFamily:"system-ui,-apple-system,sans-serif"}}>{calcRoles(data.quietRevenue,data.hasKitchen,data.servesAlcohol).note}</p>
-      </div>
-      <div style={{marginBottom:28}}>
-        <Label text={`A busy ${new Date().toLocaleString("en-AU",{month:"long"})} day`}/>
-        <div style={{marginTop:12,marginBottom:12}}><Stepper value={data.busyRevenue} onChange={v=>setData(d=>({...d,busyRevenue:v}))} min={1000} max={20000} step={100} prefix="$"/></div>
-        <input type="range" min={1000} max={20000} step={100} value={data.busyRevenue} onChange={e=>setData(d=>({...d,busyRevenue:Number(e.target.value)}))} style={{width:"100%",accentColor:B.amber}}/>
-        <p style={{fontSize:12,color:B.warmGrey,marginTop:6,fontFamily:"system-ui,-apple-system,sans-serif"}}>{calcRoles(data.busyRevenue,data.hasKitchen,data.servesAlcohol).note}</p>
-      </div>
-      <div style={{background:B.amberPale,borderRadius:16,padding:18,border:`1.5px dashed ${B.midGrey}`,marginBottom:28}}>
+      <h2 style={{fontSize:28,fontWeight:700,color:B.nearBlack,letterSpacing:"-0.02em",marginBottom:8,lineHeight:1.2,fontFamily:"system-ui,-apple-system,sans-serif"}}>
+        What does a typical<br/>{new Date().toLocaleString("en-AU",{month:"long"})} week look like?
+      </h2>
+      <p style={{fontSize:15,color:B.warmGrey,marginBottom:28,lineHeight:1.5,fontFamily:"system-ui,-apple-system,sans-serif"}}>
+        Slide each day to where it typically sits. WageSave adjusts for weather, events and school holidays on top.
+      </p>
+
+      {DAYS.map(day=>{
+        const h=data.tradingHours[day];
+        if(!h||!h.open) return null;
+        const dr=data.dayRevenue[day];
+        return(
+          <div key={day} style={{marginBottom:24,background:B.white,borderRadius:14,padding:16,boxShadow:"0 1px 6px rgba(28,21,16,0.06)"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+              <p style={{fontSize:15,fontWeight:700,color:B.nearBlack,fontFamily:"system-ui,-apple-system,sans-serif"}}>{day}</p>
+              <p style={{fontSize:16,fontWeight:700,color:B.amber,fontFamily:"system-ui,-apple-system,sans-serif"}}>${dr.value.toLocaleString()}</p>
+            </div>
+            <input type="range"
+              min={dr.quiet} max={dr.busy} step={100}
+              value={dr.value}
+              onChange={e=>{
+                const val=Number(e.target.value);
+                setData(d=>({...d,dayRevenue:{...d.dayRevenue,[day]:{...dr,value:val}}}));
+              }}
+              style={{width:"100%",accentColor:B.amber}}/>
+            <div style={{display:"flex",justifyContent:"space-between",marginTop:4}}>
+              <span style={{fontSize:11,color:B.midGrey,fontFamily:"system-ui,-apple-system,sans-serif"}}>Quiet ${dr.quiet.toLocaleString()}</span>
+              <span style={{fontSize:11,color:B.midGrey,fontFamily:"system-ui,-apple-system,sans-serif"}}>Busy ${dr.busy.toLocaleString()}</span>
+            </div>
+            <p style={{fontSize:11,color:B.warmGrey,marginTop:4,fontFamily:"system-ui,-apple-system,sans-serif"}}>{calcRoles(dr.value,data.hasKitchen,data.servesAlcohol).note}</p>
+          </div>
+        );
+      })}
+
+      <div style={{background:B.amberPale,borderRadius:16,padding:18,border:`1.5px dashed ${B.midGrey}`,marginBottom:28,marginTop:8}}>
         <p style={{fontSize:14,fontWeight:600,color:B.nearBlack,marginBottom:4,fontFamily:"system-ui,-apple-system,sans-serif"}}>📊 Have last year's sales data?</p>
         <p style={{fontSize:13,color:B.warmGrey,marginBottom:12,lineHeight:1.5,fontFamily:"system-ui,-apple-system,sans-serif"}}>Upload a CSV from Square, Lightspeed or Xero and WageSave learns your venue's patterns instantly.</p>
         <AmberBtn label="Upload CSV →" onClick={finish} outline small/>
@@ -863,6 +883,14 @@ function MainApp({venue, onReset}){
   const[weather,setWeather]=useState(null);
   const[showSettings,setShowSettings]=useState(false);
   const[showCsvNudge,setShowCsvNudge]=useState(()=>{ try{return localStorage.getItem("wagesave_csv_dismissed")!=="true"}catch{return true}});
+  const[showMonthPrompt,setShowMonthPrompt]=useState(()=>{
+    try{
+      const saved=localStorage.getItem("wagesave_month_dismissed");
+      const currentMonth=new Date().toISOString().slice(0,7); // "2026-04"
+      return saved!==currentMonth;
+    }catch{return false;}
+  });
+  const currentMonthName=new Date().toLocaleString("en-AU",{month:"long"});
   const[baseRevenue,setBaseRevenue]=useState(()=>{ try{const s=localStorage.getItem("wagesave_base_revenue");return s?Number(s):venue.baseRevenue||2500}catch{return venue.baseRevenue||2500}});
   const[dayRevenue,setDayRevenue]=useState(()=>{ try{const s=localStorage.getItem("wagesave_day_revenue");return s?JSON.parse(s):venue.dayRevenue||{...DEFAULT_DAY_REVENUE}}catch{return venue.dayRevenue||{...DEFAULT_DAY_REVENUE}}});
 
@@ -973,6 +1001,34 @@ function MainApp({venue, onReset}){
                   {opt.icon}
                 </button>
               ))}
+            </div>
+          </div>
+        )}
+
+        {/* Monthly update prompt */}
+        {showMonthPrompt&&!showCsvNudge&&(
+          <div style={{background:B.white,borderRadius:14,padding:"14px 16px",marginBottom:16,border:`1.5px solid ${B.amber}`,boxShadow:`0 2px 12px rgba(232,160,32,0.15)`}}>
+            <div style={{display:"flex",alignItems:"flex-start",gap:10}}>
+              <span style={{fontSize:20,marginTop:2}}>📅</span>
+              <div style={{flex:1}}>
+                <p style={{fontSize:13,fontWeight:600,color:B.nearBlack,marginBottom:3,fontFamily:"system-ui,-apple-system,sans-serif"}}>
+                  It's {currentMonthName} — update your estimates?
+                </p>
+                <p style={{fontSize:12,color:B.warmGrey,marginBottom:12,lineHeight:1.4,fontFamily:"system-ui,-apple-system,sans-serif"}}>
+                  Your revenue sliders may need adjusting for the new month.
+                </p>
+                <div style={{display:"flex",gap:8}}>
+                  <button onClick={()=>setShowSettings(true)} style={{flex:1,padding:"9px 0",borderRadius:10,background:B.amber,border:"none",color:B.white,fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"system-ui,-apple-system,sans-serif"}}>
+                    Update now
+                  </button>
+                  <button onClick={()=>{
+                    setShowMonthPrompt(false);
+                    try{localStorage.setItem("wagesave_month_dismissed",new Date().toISOString().slice(0,7));}catch{}
+                  }} style={{flex:1,padding:"9px 0",borderRadius:10,background:"transparent",border:`1.5px solid ${B.midGrey}`,color:B.warmGrey,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"system-ui,-apple-system,sans-serif"}}>
+                    Later
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         )}
