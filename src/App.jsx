@@ -141,6 +141,17 @@ const DEFAULT_HOURS = {
   Sun:{open:true, openTime:8, closeTime:15,hasDinner:false,dinnerOpen:17,dinnerClose:21},
 };
 
+// Default per-day revenue ranges
+const DEFAULT_DAY_REVENUE = {
+  Mon:{quiet:700,  busy:1500, value:900},
+  Tue:{quiet:700,  busy:1500, value:900},
+  Wed:{quiet:700,  busy:1500, value:900},
+  Thu:{quiet:1000, busy:2500, value:1400},
+  Fri:{quiet:1200, busy:4000, value:1800},
+  Sat:{quiet:2000, busy:7000, value:3000},
+  Sun:{quiet:1200, busy:3500, value:1800},
+};
+
 // ─── ROLE MODEL ───────────────────────────────────────────────────────────────
 function calcRoles(rev, hasKitchen, servesAlcohol) {
   if (rev < 500)  return {roles:[{role:"All-rounder",count:1}],total:1,note:"Quiet day — one person can manage"};
@@ -223,7 +234,7 @@ function formatHour(h) {
   return `${hour}${h<12?"am":"pm"}`;
 }
 
-function calcDay(day, baseRev, hasKitchen, servesAlcohol, tradingHours, seasonality, weatherMult=1.0, eventMult=1.0, weekVar=1.0, date) {
+function calcDay(day, baseRev, hasKitchen, servesAlcohol, tradingHours, seasonality, weatherMult=1.0, eventMult=1.0, weekVar=1.0, date, dayRevenue=null) {
   const h = tradingHours[day];
   if (!h || !h.open) return {adj:0,laborBudget:0,byHour:new Array(24).fill(0),roles:{roles:[],total:0,note:"Closed today"},shifts:[],closed:true};
 
@@ -419,7 +430,11 @@ function Onboarding({onComplete}){
 
   const inputStyle={width:"100%",padding:"15px 16px",borderRadius:14,border:`1.5px solid ${B.midGrey}`,fontSize:16,fontFamily:"system-ui,-apple-system,sans-serif",color:B.nearBlack,background:B.white,outline:"none",boxSizing:"border-box",transition:"border-color 0.15s"};
   function updateHours(day,key,val){setData(d=>({...d,tradingHours:{...d.tradingHours,[day]:{...d.tradingHours[day],[key]:val}}}));}
-  function finish(){onComplete({...data,baseRevenue:Math.round((data.quietRevenue+data.busyRevenue)/2)});}
+  function finish(){onComplete({
+    ...data,
+    baseRevenue:Math.round((data.quietRevenue+data.busyRevenue)/2),
+    dayRevenue:{...DEFAULT_DAY_REVENUE},
+  });}
 
   const steps=[
     // 0: Welcome
@@ -681,7 +696,7 @@ function DayDrawer({dayData,onActualChange,actual,feedback,onFeedback,onClose,ve
 }
 
 // ─── VENUE SETTINGS ──────────────────────────────────────────────────────────
-function VenueSettings({venue, baseRevenue, onBaseRevenueChange, onVenueUpdate, onReset}){
+function VenueSettings({venue, baseRevenue, dayRevenue, onDayRevenueChange, onBaseRevenueChange, onVenueUpdate, onReset}){
   const[local,setLocal]=useState({...venue});
   const[saved,setSaved]=useState(false);
 
@@ -760,12 +775,40 @@ function VenueSettings({venue, baseRevenue, onBaseRevenueChange, onVenueUpdate, 
         </div>
       </div>
 
-      {/* Revenue baseline */}
+      {/* Per-day revenue sliders */}
       <div style={sectionStyle}>
-        <Label text={`Revenue baseline — ${new Date().toLocaleString("en-AU",{month:"long"})}`}/>
-        <div style={{marginTop:8,marginBottom:8}}><Stepper value={baseRevenue} onChange={v=>{onBaseRevenueChange(v);setSaved(false);}} min={200} max={15000} step={100} prefix="$"/></div>
-        <input type="range" min={200} max={15000} step={100} value={baseRevenue} onChange={e=>{onBaseRevenueChange(Number(e.target.value));setSaved(false);}} style={{width:"100%",accentColor:B.amber}}/>
-        <p style={{fontSize:12,color:B.warmGrey,marginTop:6,fontFamily:"system-ui,-apple-system,sans-serif"}}>{calcRoles(baseRevenue,local.hasKitchen,local.servesAlcohol).note}</p>
+        <Label text={`Typical revenue per day — ${new Date().toLocaleString("en-AU",{month:"long"})}`}/>
+        <p style={{fontSize:12,color:B.warmGrey,marginBottom:16,fontFamily:"system-ui,-apple-system,sans-serif",lineHeight:1.5}}>
+          Slide each day to where it typically sits. WageSave adjusts for weather, events and school holidays on top.
+        </p>
+        {DAYS.map(day=>{
+          const h=local.tradingHours[day];
+          if(!h||!h.open) return null;
+          const dr=dayRevenue[day]||DEFAULT_DAY_REVENUE[day];
+          const pct=Math.round(((dr.value-dr.quiet)/(dr.busy-dr.quiet))*100);
+          return(
+            <div key={day} style={{marginBottom:20}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                <p style={{fontSize:14,fontWeight:700,color:B.nearBlack,fontFamily:"system-ui,-apple-system,sans-serif"}}>{day}</p>
+                <p style={{fontSize:14,fontWeight:600,color:B.amber,fontFamily:"system-ui,-apple-system,sans-serif"}}>${dr.value.toLocaleString()}</p>
+              </div>
+              <input type="range"
+                min={dr.quiet} max={dr.busy} step={100}
+                value={dr.value}
+                onChange={e=>{
+                  const val=Number(e.target.value);
+                  onDayRevenueChange(prev=>({...prev,[day]:{...dr,value:val}}));
+                  setSaved(false);
+                }}
+                style={{width:"100%",accentColor:B.amber}}/>
+              <div style={{display:"flex",justifyContent:"space-between",marginTop:3}}>
+                <span style={{fontSize:11,color:B.midGrey,fontFamily:"system-ui,-apple-system,sans-serif"}}>Quiet ${dr.quiet.toLocaleString()}</span>
+                <span style={{fontSize:11,color:B.midGrey,fontFamily:"system-ui,-apple-system,sans-serif"}}>Busy ${dr.busy.toLocaleString()}</span>
+              </div>
+              <p style={{fontSize:11,color:B.warmGrey,marginTop:3,fontFamily:"system-ui,-apple-system,sans-serif"}}>{calcRoles(dr.value,local.hasKitchen,local.servesAlcohol).note}</p>
+            </div>
+          );
+        })}
       </div>
 
       {/* Trading hours */}
@@ -821,6 +864,7 @@ function MainApp({venue, onReset}){
   const[showSettings,setShowSettings]=useState(false);
   const[showCsvNudge,setShowCsvNudge]=useState(()=>{ try{return localStorage.getItem("wagesave_csv_dismissed")!=="true"}catch{return true}});
   const[baseRevenue,setBaseRevenue]=useState(()=>{ try{const s=localStorage.getItem("wagesave_base_revenue");return s?Number(s):venue.baseRevenue||2500}catch{return venue.baseRevenue||2500}});
+  const[dayRevenue,setDayRevenue]=useState(()=>{ try{const s=localStorage.getItem("wagesave_day_revenue");return s?JSON.parse(s):venue.dayRevenue||{...DEFAULT_DAY_REVENUE}}catch{return venue.dayRevenue||{...DEFAULT_DAY_REVENUE}}});
 
   useEffect(()=>{
     if(!navigator.geolocation) return;
@@ -832,6 +876,7 @@ function MainApp({venue, onReset}){
 
   // Persist state to localStorage
   useEffect(()=>{try{localStorage.setItem("wagesave_actual",JSON.stringify(actual));}catch{}},[actual]);
+  useEffect(()=>{try{localStorage.setItem("wagesave_day_revenue",JSON.stringify(dayRevenue));}catch{}},[dayRevenue]);
   useEffect(()=>{try{localStorage.setItem("wagesave_feedback",JSON.stringify(feedback));}catch{}},[feedback]);
   useEffect(()=>{try{localStorage.setItem("wagesave_base_revenue",String(baseRevenue));}catch{}},[baseRevenue]);
 
@@ -856,7 +901,7 @@ function MainApp({venue, onReset}){
     if(isSchoolHoliday(date)&&!holiday) flags.push({icon:"🏫",label:"School holidays",impact:"+15%",mult:1.15});
     if(isLongWeekend(date)&&!holiday) flags.push({icon:"📅",label:"Long weekend",impact:"+20%",mult:1.20});
     const eventMult=flags.reduce((acc,f)=>{const p=parseFloat((f.impact||"0").replace("%",""))/100;return acc*(1+p);},1.0);
-    const dayData=calcDay(day,baseRevenue,venue.hasKitchen,venue.servesAlcohol,venue.tradingHours,venue.seasonality,weatherMult,eventMult,weekVar,date);
+    const dayData=calcDay(day,baseRevenue,venue.hasKitchen,venue.servesAlcohol,venue.tradingHours,venue.seasonality,weatherMult,eventMult,weekVar,date,dayRevenue);
     return{day,date,flags,...dayData};
   });
 
@@ -945,6 +990,8 @@ function MainApp({venue, onReset}){
           <VenueSettings
             venue={venue}
             baseRevenue={baseRevenue}
+            dayRevenue={dayRevenue}
+            onDayRevenueChange={setDayRevenue}
             onBaseRevenueChange={setBaseRevenue}
             onVenueUpdate={v=>{
               const updated={...venue,...v};
