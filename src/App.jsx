@@ -1265,23 +1265,434 @@ function MainApp({venue, onReset}){
   );
 }
 
+
+// ─── ROSTER ANALYSER ──────────────────────────────────────────────────────────
+function RosterAnalyser({onSetupVenue, onBack}){
+  const[step,setStep]=useState(0); // 0=upload, 1=revenue, 2=analysing, 3=results
+  const[rosterImage,setRosterImage]=useState(null);
+  const[timesheetImage,setTimesheetImage]=useState(null);
+  const[rosterPreview,setRosterPreview]=useState(null);
+  const[timesheetPreview,setTimesheetPreview]=useState(null);
+  const[weekRevenue,setWeekRevenue]=useState({Mon:0,Tue:0,Wed:0,Thu:0,Fri:0,Sat:0,Sun:0});
+  const[analysis,setAnalysis]=useState(null);
+  const[error,setError]=useState(null);
+  const rosterRef=useRef(null);
+  const timesheetRef=useRef(null);
+
+  const DAYS=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+  const AVG_RATE=29;
+
+  function handleImageUpload(file, type){
+    if(!file) return;
+    const reader=new FileReader();
+    reader.onload=e=>{
+      const dataUrl=e.target.result;
+      if(type==="roster"){ setRosterImage(dataUrl); setRosterPreview(dataUrl); }
+      else{ setTimesheetImage(dataUrl); setTimesheetPreview(dataUrl); }
+    };
+    reader.readAsDataURL(file);
+  }
+
+  async function analyseRoster(){
+    setStep(2);
+    setError(null);
+
+    try{
+      const messages=[];
+      const imageContent=[];
+
+      if(rosterImage){
+        imageContent.push({
+          type:"image",
+          source:{type:"base64",media_type:"image/jpeg",data:rosterImage.split(",")[1]}
+        });
+      }
+      if(timesheetImage){
+        imageContent.push({
+          type:"image",
+          source:{type:"base64",media_type:"image/jpeg",data:timesheetImage.split(",")[1]}
+        });
+      }
+
+      imageContent.push({
+        type:"text",
+        text:`You are analysing a hospitality venue roster${timesheetImage?" and timesheet":""}.
+
+Extract all shift information and return ONLY a JSON object in this exact format:
+{
+  "venueName": "string or null",
+  "weekOf": "string or null",
+  "shifts": [
+    {"day": "Mon/Tue/Wed/Thu/Fri/Sat/Sun", "role": "string", "startHour": number, "endHour": number, "hours": number}
+  ],
+  "summary": "one sentence describing what you see"
+}
+
+Rules:
+- Convert times to 24hr numbers (8am=8, 12pm=12, 3pm=15, 5pm=17, close=22 if unclear)
+- Infer roles from context: morning/coffee staff = Coffee, kitchen mentions = Kitchen, otherwise = Floor
+- Each named person = one shift entry
+- Return ONLY valid JSON, no other text`
+      });
+
+      const response=await fetch("https://api.anthropic.com/v1/messages",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({
+          model:"claude-sonnet-4-20250514",
+          max_tokens:1000,
+          messages:[{role:"user",content:imageContent}]
+        })
+      });
+
+      const data=await response.json();
+      const text=data.content?.find(c=>c.type==="text")?.text||"";
+      const clean=text.replace(/```json|```/g,"").trim();
+      const parsed=JSON.parse(clean);
+
+      // Calculate analysis
+      const dayData={};
+      DAYS.forEach(day=>{
+        const dayShifts=parsed.shifts.filter(s=>s.day===day);
+        const totalHours=dayShifts.reduce((a,s)=>a+(s.hours||(s.endHour-s.startHour)),0);
+        const peakStaff=dayShifts.length;
+        const rev=weekRevenue[day]||0;
+        const laborBudget=rev*0.30;
+        const optimalHours=laborBudget/AVG_RATE;
+        const optimalPeak=rev<500?1:rev<1500?2:rev<3000?3:rev<5000?4:rev<7000?5:6;
+        const actualWages=totalHours*AVG_RATE;
+        const optimalWages=Math.min(actualWages,optimalHours*AVG_RATE);
+        const waste=Math.max(0,actualWages-optimalWages);
+
+        if(dayShifts.length>0||rev>0){
+          dayData[day]={
+            shifts:dayShifts,
+            totalHours:Math.round(totalHours*10)/10,
+            peakStaff,
+            revenue:rev,
+            actualWages:Math.round(actualWages),
+            optimalWages:Math.round(optimalWages),
+            waste:Math.round(waste),
+            optimalPeak,
+            overBy:Math.max(0,peakStaff-optimalPeak),
+          };
+        }
+      });
+
+      const totalWaste=Object.values(dayData).reduce((a,d)=>a+d.waste,0);
+      const totalActual=Object.values(dayData).reduce((a,d)=>a+d.actualWages,0);
+
+      setAnalysis({
+        venueName:parsed.venueName,
+        weekOf:parsed.weekOf,
+        summary:parsed.summary,
+        dayData,
+        totalWaste,
+        totalActual,
+        shiftsFound:parsed.shifts.length,
+      });
+      setStep(3);
+
+    }catch(err){
+      setError("Couldn't read the roster. Try a clearer photo or check your connection.");
+      setStep(1);
+    }
+  }
+
+  const inputStyle={width:"100%",padding:"12px 14px",borderRadius:12,
+    border:`1.5px solid ${B.midGrey}`,fontSize:16,fontFamily:"system-ui,-apple-system,sans-serif",
+    color:B.nearBlack,background:B.white,outline:"none",boxSizing:"border-box"};
+
+  // Step 0 — Upload
+  if(step===0) return(
+    <div style={{minHeight:"100vh",background:B.amberPale}}>
+      <style>{`*{box-sizing:border-box;margin:0;padding:0;}@keyframes fadeUp{from{opacity:0;transform:translateY(12px);}to{opacity:1;transform:translateY(0);}}.fade-up{animation:fadeUp 0.35s ease forwards;}`}</style>
+      <div style={{maxWidth:440,margin:"0 auto",padding:"40px 24px 80px"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:40}}>
+          <LogoWordmark size={20}/>
+          <button onClick={onBack} style={{fontSize:13,color:B.warmGrey,background:"none",border:"none",cursor:"pointer",fontFamily:"system-ui,-apple-system,sans-serif"}}>← Back</button>
+        </div>
+
+        <h2 style={{fontSize:28,fontWeight:700,color:B.nearBlack,letterSpacing:"-0.02em",marginBottom:8,lineHeight:1.2,fontFamily:"system-ui,-apple-system,sans-serif"}}>
+          Analyse my roster
+        </h2>
+        <p style={{fontSize:15,color:B.warmGrey,marginBottom:32,lineHeight:1.5,fontFamily:"system-ui,-apple-system,sans-serif"}}>
+          Upload a photo of last week's roster. WageSave will tell you where you could have saved on wages.
+        </p>
+
+        {/* Roster upload */}
+        <div style={{marginBottom:20}}>
+          <p style={{fontSize:13,fontWeight:600,color:B.nearBlack,marginBottom:10,fontFamily:"system-ui,-apple-system,sans-serif",letterSpacing:"0.02em"}}>
+            ROSTER <span style={{color:B.amber}}>*</span>
+          </p>
+          <input ref={rosterRef} type="file" accept="image/*" capture="environment"
+            onChange={e=>handleImageUpload(e.target.files[0],"roster")}
+            style={{display:"none"}}/>
+          {rosterPreview?(
+            <div style={{position:"relative",borderRadius:14,overflow:"hidden",marginBottom:8}}>
+              <img src={rosterPreview} alt="Roster" style={{width:"100%",borderRadius:14,display:"block"}}/>
+              <button onClick={()=>{setRosterImage(null);setRosterPreview(null);}} style={{
+                position:"absolute",top:10,right:10,width:28,height:28,borderRadius:"50%",
+                background:"rgba(28,21,16,0.7)",border:"none",color:"white",cursor:"pointer",
+                display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,
+              }}>×</button>
+            </div>
+          ):(
+            <button onClick={()=>rosterRef.current?.click()} style={{
+              width:"100%",padding:"32px 20px",borderRadius:14,
+              border:`2px dashed ${B.midGrey}`,background:B.white,
+              cursor:"pointer",textAlign:"center",
+            }}>
+              <p style={{fontSize:32,marginBottom:8}}>📸</p>
+              <p style={{fontSize:15,fontWeight:600,color:B.nearBlack,marginBottom:4,fontFamily:"system-ui,-apple-system,sans-serif"}}>Take a photo or upload</p>
+              <p style={{fontSize:13,color:B.warmGrey,fontFamily:"system-ui,-apple-system,sans-serif"}}>Roster sheet, spreadsheet screenshot, anything works</p>
+            </button>
+          )}
+        </div>
+
+        {/* Timesheet upload — optional */}
+        <div style={{marginBottom:32}}>
+          <p style={{fontSize:13,fontWeight:600,color:B.nearBlack,marginBottom:10,fontFamily:"system-ui,-apple-system,sans-serif",letterSpacing:"0.02em"}}>
+            TIMESHEET <span style={{color:B.warmGrey,fontWeight:400}}>— optional, more accurate</span>
+          </p>
+          <input ref={timesheetRef} type="file" accept="image/*" capture="environment"
+            onChange={e=>handleImageUpload(e.target.files[0],"timesheet")}
+            style={{display:"none"}}/>
+          {timesheetPreview?(
+            <div style={{position:"relative",borderRadius:14,overflow:"hidden",marginBottom:8}}>
+              <img src={timesheetPreview} alt="Timesheet" style={{width:"100%",borderRadius:14,display:"block"}}/>
+              <button onClick={()=>{setTimesheetImage(null);setTimesheetPreview(null);}} style={{
+                position:"absolute",top:10,right:10,width:28,height:28,borderRadius:"50%",
+                background:"rgba(28,21,16,0.7)",border:"none",color:"white",cursor:"pointer",
+                display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,
+              }}>×</button>
+            </div>
+          ):(
+            <button onClick={()=>timesheetRef.current?.click()} style={{
+              width:"100%",padding:"20px",borderRadius:14,
+              border:`1.5px dashed ${B.midGrey}`,background:B.amberPale,
+              cursor:"pointer",textAlign:"center",
+            }}>
+              <p style={{fontSize:20,marginBottom:6}}>📋</p>
+              <p style={{fontSize:14,fontWeight:600,color:B.warmGrey,marginBottom:2,fontFamily:"system-ui,-apple-system,sans-serif"}}>Add timesheet</p>
+              <p style={{fontSize:12,color:B.midGrey,fontFamily:"system-ui,-apple-system,sans-serif"}}>Shows actual hours worked vs rostered</p>
+            </button>
+          )}
+        </div>
+
+        {error&&<p style={{fontSize:13,color:B.danger,marginBottom:16,fontFamily:"system-ui,-apple-system,sans-serif"}}>{error}</p>}
+
+        <button onClick={()=>rosterImage?setStep(1):null} style={{
+          width:"100%",padding:"17px 0",
+          background:rosterImage?B.amber:"#D4C9BB",
+          color:B.white,border:"none",borderRadius:14,
+          fontSize:16,fontWeight:700,cursor:rosterImage?"pointer":"not-allowed",
+          fontFamily:"system-ui,-apple-system,sans-serif",
+          boxShadow:rosterImage?`0 4px 16px rgba(232,160,32,0.3)`:"none",
+        }}>
+          Next — add revenue →
+        </button>
+      </div>
+    </div>
+  );
+
+  // Step 1 — Revenue input
+  if(step===1) return(
+    <div style={{minHeight:"100vh",background:B.amberPale}}>
+      <style>{`*{box-sizing:border-box;margin:0;padding:0;}`}</style>
+      <div style={{maxWidth:440,margin:"0 auto",padding:"40px 24px 80px"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:40}}>
+          <LogoWordmark size={20}/>
+          <button onClick={()=>setStep(0)} style={{fontSize:13,color:B.warmGrey,background:"none",border:"none",cursor:"pointer",fontFamily:"system-ui,-apple-system,sans-serif"}}>← Back</button>
+        </div>
+
+        <h2 style={{fontSize:28,fontWeight:700,color:B.nearBlack,letterSpacing:"-0.02em",marginBottom:8,lineHeight:1.2,fontFamily:"system-ui,-apple-system,sans-serif"}}>
+          What did each day do?
+        </h2>
+        <p style={{fontSize:15,color:B.warmGrey,marginBottom:28,lineHeight:1.5,fontFamily:"system-ui,-apple-system,sans-serif"}}>
+          Enter revenue for each day you were open. Leave closed days at $0.
+        </p>
+
+        {DAYS.map(day=>(
+          <div key={day} style={{marginBottom:14}}>
+            <p style={{fontSize:13,fontWeight:600,color:B.nearBlack,marginBottom:6,fontFamily:"system-ui,-apple-system,sans-serif"}}>{day}</p>
+            <div style={{position:"relative"}}>
+              <span style={{position:"absolute",left:14,top:"50%",transform:"translateY(-50%)",fontSize:16,color:B.warmGrey,fontFamily:"system-ui,-apple-system,sans-serif"}}>$</span>
+              <input type="number" min={0} max={99999}
+                value={weekRevenue[day]||""}
+                placeholder="0 — closed"
+                onChange={e=>setWeekRevenue(p=>({...p,[day]:Number(e.target.value)}))}
+                style={{...inputStyle,paddingLeft:28}}
+                onFocus={e=>e.target.style.borderColor=B.amber}
+                onBlur={e=>e.target.style.borderColor=B.midGrey}/>
+            </div>
+          </div>
+        ))}
+
+        <div style={{marginTop:28}}>
+          <button onClick={analyseRoster} style={{
+            width:"100%",padding:"17px 0",background:B.amber,
+            color:B.white,border:"none",borderRadius:14,
+            fontSize:16,fontWeight:700,cursor:"pointer",
+            fontFamily:"system-ui,-apple-system,sans-serif",
+            boxShadow:`0 4px 16px rgba(232,160,32,0.3)`,
+          }}>
+            Analyse my roster →
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  // Step 2 — Analysing
+  if(step===2) return(
+    <div style={{minHeight:"100vh",background:B.amberPale,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:20}}>
+      <style>{`@keyframes spin{to{transform:rotate(360deg);}} .spin{animation:spin 1s linear infinite;display:inline-block;}`}</style>
+      <Logo size={48}/>
+      <div style={{textAlign:"center"}}>
+        <p style={{fontSize:18,fontWeight:600,color:B.nearBlack,marginBottom:8,fontFamily:"system-ui,-apple-system,sans-serif"}}>Reading your roster...</p>
+        <p style={{fontSize:14,color:B.warmGrey,fontFamily:"system-ui,-apple-system,sans-serif"}}>This takes about 10 seconds</p>
+      </div>
+      <div style={{width:40,height:40,borderRadius:"50%",border:`3px solid ${B.lightGrey}`,borderTopColor:B.amber,animation:"spin 0.8s linear infinite"}}/>
+    </div>
+  );
+
+  // Step 3 — Results
+  if(step===3&&analysis) return(
+    <div style={{minHeight:"100vh",background:B.amberPale,paddingBottom:80}}>
+      <style>{`*{box-sizing:border-box;margin:0;padding:0;}@keyframes fadeUp{from{opacity:0;transform:translateY(12px);}to{opacity:1;transform:translateY(0);}}.fade-up{animation:fadeUp 0.4s ease forwards;}`}</style>
+
+      {/* Header */}
+      <div style={{background:B.white,borderBottom:`1px solid ${B.lightGrey}`,padding:"14px 20px",position:"sticky",top:0,zIndex:100,boxShadow:"0 1px 8px rgba(28,21,16,0.06)"}}>
+        <div style={{maxWidth:480,margin:"0 auto",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <LogoWordmark size={18}/>
+          <button onClick={()=>setStep(0)} style={{fontSize:13,color:B.warmGrey,background:"none",border:"none",cursor:"pointer",fontFamily:"system-ui,-apple-system,sans-serif"}}>Analyse another</button>
+        </div>
+      </div>
+
+      <div style={{maxWidth:480,margin:"0 auto",padding:"24px 20px 0"}}>
+
+        {/* Venue + summary */}
+        {analysis.venueName&&(
+          <p style={{fontSize:13,color:B.warmGrey,marginBottom:4,fontFamily:"system-ui,-apple-system,sans-serif"}}>{analysis.venueName}{analysis.weekOf?` · ${analysis.weekOf}`:""}</p>
+        )}
+
+        {/* Hero waste number */}
+        <div className="fade-up" style={{background:analysis.totalWaste>0?B.dangerLight:B.successLight,borderRadius:20,padding:"24px 20px",marginBottom:20,border:`1.5px solid ${analysis.totalWaste>0?"#ffcdd2":B.successLight}`}}>
+          {analysis.totalWaste>0?(
+            <>
+              <p style={{fontSize:13,fontWeight:600,color:B.danger,marginBottom:8,fontFamily:"system-ui,-apple-system,sans-serif",letterSpacing:"0.05em"}}>IDENTIFIED WAGE WASTE</p>
+              <p style={{fontSize:52,fontWeight:700,color:B.danger,lineHeight:1,fontFamily:"system-ui,-apple-system,sans-serif"}}>
+                ${analysis.totalWaste.toLocaleString()}
+              </p>
+              <p style={{fontSize:14,color:B.danger,marginTop:6,opacity:0.8,fontFamily:"system-ui,-apple-system,sans-serif"}}>
+                last week · {analysis.shiftsFound} shifts read
+              </p>
+            </>
+          ):(
+            <>
+              <p style={{fontSize:13,fontWeight:600,color:B.success,marginBottom:8,fontFamily:"system-ui,-apple-system,sans-serif"}}>STAFFING LOOKS EFFICIENT</p>
+              <p style={{fontSize:22,fontWeight:700,color:B.success,fontFamily:"system-ui,-apple-system,sans-serif"}}>No significant waste identified</p>
+            </>
+          )}
+        </div>
+
+        {/* Per day breakdown */}
+        <p style={{fontSize:11,letterSpacing:"0.1em",color:B.warmGrey,fontFamily:"system-ui,-apple-system,sans-serif",textTransform:"uppercase",fontWeight:600,marginBottom:12}}>Day by day</p>
+
+        {DAYS.map(day=>{
+          const d=analysis.dayData[day];
+          if(!d) return null;
+          return(
+            <div key={day} className="fade-up" style={{
+              background:B.white,borderRadius:16,padding:18,marginBottom:12,
+              border:`1.5px solid ${d.waste>0?B.dangerLight:B.lightGrey}`,
+              boxShadow:"0 2px 8px rgba(28,21,16,0.05)",
+            }}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}>
+                <div>
+                  <p style={{fontSize:13,fontWeight:700,color:B.nearBlack,fontFamily:"system-ui,-apple-system,sans-serif",letterSpacing:"0.05em",textTransform:"uppercase"}}>{day}</p>
+                  <p style={{fontSize:12,color:B.warmGrey,marginTop:2,fontFamily:"system-ui,-apple-system,sans-serif"}}>
+                    {d.peakStaff} staff · {d.totalHours}h total · ${d.revenue.toLocaleString()} revenue
+                  </p>
+                </div>
+                {d.waste>0?(
+                  <div style={{textAlign:"right"}}>
+                    <p style={{fontSize:11,color:B.danger,fontWeight:600,fontFamily:"system-ui,-apple-system,sans-serif"}}>WASTE</p>
+                    <p style={{fontSize:20,fontWeight:700,color:B.danger,fontFamily:"system-ui,-apple-system,sans-serif"}}>−${d.waste.toLocaleString()}</p>
+                  </div>
+                ):(
+                  <p style={{fontSize:13,color:B.success,fontWeight:600,fontFamily:"system-ui,-apple-system,sans-serif"}}>✓ On track</p>
+                )}
+              </div>
+
+              {d.overBy>0&&(
+                <div style={{background:B.dangerLight,borderRadius:10,padding:"10px 14px"}}>
+                  <p style={{fontSize:13,color:B.danger,fontFamily:"system-ui,-apple-system,sans-serif"}}>
+                    ⚠️ Overstaffed by {d.overBy} — WageSave would have recommended {d.optimalPeak} peak, you had {d.peakStaff}
+                  </p>
+                </div>
+              )}
+
+              {d.shifts.length>0&&(
+                <div style={{marginTop:10}}>
+                  {d.shifts.map((s,i)=>(
+                    <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"4px 0",borderTop:i>0?`1px solid ${B.lightGrey}`:"none"}}>
+                      <span style={{fontSize:12,color:B.warmGrey,fontFamily:"system-ui,-apple-system,sans-serif"}}>{s.role}</span>
+                      <span style={{fontSize:12,color:B.nearBlack,fontFamily:"system-ui,-apple-system,sans-serif"}}>{s.startHour%12||12}{s.startHour<12?"am":"pm"} → {s.endHour%12||12}{s.endHour<12?"am":"pm"}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        {/* CTA */}
+        <div style={{background:B.amber,borderRadius:20,padding:"24px 20px",marginTop:8,textAlign:"center"}}>
+          <p style={{fontSize:16,fontWeight:700,color:B.white,marginBottom:8,fontFamily:"system-ui,-apple-system,sans-serif"}}>
+            Get predictions before you write next week's roster
+          </p>
+          <p style={{fontSize:13,color:"rgba(255,255,255,0.8)",marginBottom:20,fontFamily:"system-ui,-apple-system,sans-serif"}}>
+            Set up your venue and WageSave predicts the ideal staffing every day — before you roster anyone.
+          </p>
+          <button onClick={onSetupVenue} style={{
+            width:"100%",padding:"15px 0",background:B.white,
+            color:B.amber,border:"none",borderRadius:12,
+            fontSize:15,fontWeight:700,cursor:"pointer",
+            fontFamily:"system-ui,-apple-system,sans-serif",
+          }}>
+            Set up my venue →
+          </button>
+        </div>
+
+      </div>
+    </div>
+  );
+
+  return null;
+}
+
 // ─── ROOT ─────────────────────────────────────────────────────────────────────
 export default function WageSave(){
   const[venue,setVenue]=useState(()=>{
     try{const s=localStorage.getItem("wagesave_venue");return s?JSON.parse(s):null;}catch{return null;}
   });
   const[loading,setLoading]=useState(true);
+  const[mode,setMode]=useState("home"); // "home" | "onboarding" | "analyse"
 
   useEffect(()=>setLoading(false),[]);
 
   function handleComplete(v){
     try{localStorage.setItem("wagesave_venue",JSON.stringify(v));}catch{}
     setVenue(v);
+    setMode("app");
   }
 
   function handleReset(){
-    try{["wagesave_venue","wagesave_actual","wagesave_feedback","wagesave_base_revenue","wagesave_csv_dismissed"].forEach(k=>localStorage.removeItem(k));}catch{}
+    try{["wagesave_venue","wagesave_actual","wagesave_feedback","wagesave_base_revenue","wagesave_csv_dismissed","wagesave_day_revenue"].forEach(k=>localStorage.removeItem(k));}catch{}
     setVenue(null);
+    setMode("home");
   }
 
   if(loading) return(
@@ -1290,6 +1701,70 @@ export default function WageSave(){
     </div>
   );
 
-  if(!venue) return<Onboarding onComplete={handleComplete}/>;
-  return<MainApp venue={venue} onReset={handleReset}/>;
+  // Returning user — go straight to app
+  if(venue) return<MainApp venue={venue} onReset={handleReset}/>;
+
+  // Analyse mode
+  if(mode==="analyse") return(
+    <RosterAnalyser
+      onSetupVenue={()=>setMode("onboarding")}
+      onBack={()=>setMode("home")}
+    />
+  );
+
+  // Onboarding
+  if(mode==="onboarding") return<Onboarding onComplete={handleComplete}/>;
+
+  // Home — choose path
+  return(
+    <div style={{minHeight:"100vh",background:B.amberPale}}>
+      <style>{`*{box-sizing:border-box;margin:0;padding:0;}@keyframes fadeUp{from{opacity:0;transform:translateY(16px);}to{opacity:1;transform:translateY(0);}}.fade-up{animation:fadeUp 0.4s ease forwards;}`}</style>
+      <div style={{maxWidth:440,margin:"0 auto",padding:"60px 24px 80px",textAlign:"center"}}>
+
+        {/* Logo */}
+        <div style={{display:"flex",justifyContent:"center",marginBottom:32}}>
+          <Logo size={56}/>
+        </div>
+
+        <p style={{fontSize:17,color:B.warmGrey,marginBottom:8,fontFamily:"system-ui,-apple-system,sans-serif"}}>
+          {new Date().getHours()<12?"Good morning.":new Date().getHours()<17?"Good afternoon.":"Good evening."}
+        </p>
+        <h1 style={{fontSize:36,fontWeight:700,letterSpacing:"-0.02em",color:B.nearBlack,marginBottom:16,lineHeight:1.15,fontFamily:"system-ui,-apple-system,sans-serif"}}>
+          It's time to<br/><span style={{color:B.amber}}>WageSave.</span>
+        </h1>
+        <p style={{fontSize:16,color:B.warmGrey,lineHeight:1.65,marginBottom:48,fontFamily:"system-ui,-apple-system,sans-serif"}}>
+          Stop paying for staff<br/>you don't need.
+        </p>
+
+        {/* Two paths */}
+        <div className="fade-up" style={{display:"flex",flexDirection:"column",gap:14}}>
+          {/* Primary — set up venue */}
+          <button onClick={()=>setMode("onboarding")} style={{
+            width:"100%",padding:"18px 0",background:B.amber,
+            color:B.white,border:"none",borderRadius:14,
+            fontSize:16,fontWeight:700,cursor:"pointer",
+            fontFamily:"system-ui,-apple-system,sans-serif",
+            boxShadow:`0 4px 16px rgba(232,160,32,0.3)`,
+          }}>
+            Set up my venue →
+          </button>
+
+          {/* Secondary — analyse roster */}
+          <button onClick={()=>setMode("analyse")} style={{
+            width:"100%",padding:"18px 0",background:B.white,
+            color:B.nearBlack,border:`1.5px solid ${B.lightGrey}`,borderRadius:14,
+            fontSize:16,fontWeight:600,cursor:"pointer",
+            fontFamily:"system-ui,-apple-system,sans-serif",
+            boxShadow:"0 2px 8px rgba(28,21,16,0.06)",
+          }}>
+            📸 Analyse my roster first
+          </button>
+
+          <p style={{fontSize:13,color:B.midGrey,fontFamily:"system-ui,-apple-system,sans-serif"}}>
+            Free for 1 month · No credit card needed
+          </p>
+        </div>
+      </div>
+    </div>
+  );
 }
