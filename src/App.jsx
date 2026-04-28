@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 
 const B = {
   amber:       "#E8A020",
@@ -141,15 +141,15 @@ const DEFAULT_HOURS = {
   Sun:{open:true, openTime:8, closeTime:15,hasDinner:false,dinnerOpen:17,dinnerClose:21},
 };
 
-// Default per-day revenue ranges
+// Default per-day revenue ranges — min/max are the slider bounds, low/high are the selected range
 const DEFAULT_DAY_REVENUE = {
-  Mon:{quiet:700,  busy:1500, value:900},
-  Tue:{quiet:700,  busy:1500, value:900},
-  Wed:{quiet:700,  busy:1500, value:900},
-  Thu:{quiet:1000, busy:2500, value:1400},
-  Fri:{quiet:1200, busy:4000, value:1800},
-  Sat:{quiet:2000, busy:7000, value:3000},
-  Sun:{quiet:1200, busy:3500, value:1800},
+  Mon:{min:200,  max:3000,  low:600,  high:1200},
+  Tue:{min:200,  max:3000,  low:600,  high:1200},
+  Wed:{min:200,  max:3000,  low:600,  high:1200},
+  Thu:{min:500,  max:5000,  low:1000, high:2000},
+  Fri:{min:500,  max:8000,  low:1400, high:3000},
+  Sat:{min:1000, max:12000, low:2500, high:5500},
+  Sun:{min:500,  max:6000,  low:1200, high:2800},
 };
 
 // ─── ROLE MODEL ───────────────────────────────────────────────────────────────
@@ -417,6 +417,68 @@ function FeedbackPanel({feedback, onSave}){
   );
 }
 
+// ─── DUAL RANGE SLIDER ───────────────────────────────────────────────────────
+function RangeSlider({min, max, low, high, onChange, step=100}){
+  const trackRef = useRef(null);
+
+  function getPercent(val){ return Math.round(((val-min)/(max-min))*100); }
+
+  function handleTrackClick(e){
+    if(!trackRef.current) return;
+    const rect = trackRef.current.getBoundingClientRect();
+    const pct = (e.clientX - rect.left) / rect.width;
+    const val = Math.round((min + pct*(max-min)) / step) * step;
+    const midpoint = (low+high)/2;
+    if(val < midpoint) onChange(Math.min(val, high-step), high);
+    else onChange(low, Math.max(val, low+step));
+  }
+
+  const lowPct = getPercent(low);
+  const highPct = getPercent(high);
+
+  return(
+    <div style={{position:"relative",height:36,display:"flex",alignItems:"center",userSelect:"none"}}>
+      {/* Track */}
+      <div ref={trackRef} onClick={handleTrackClick} style={{
+        position:"absolute",left:0,right:0,height:4,
+        background:B.lightGrey,borderRadius:2,cursor:"pointer",
+      }}>
+        {/* Active range fill */}
+        <div style={{
+          position:"absolute",
+          left:`${lowPct}%`,
+          width:`${highPct-lowPct}%`,
+          height:"100%",background:B.amber,borderRadius:2,
+        }}/>
+      </div>
+
+      {/* Low handle */}
+      <input type="range" min={min} max={high-step} step={step} value={low}
+        onChange={e=>onChange(Number(e.target.value), high)}
+        style={{
+          position:"absolute",left:0,right:0,width:"100%",
+          WebkitAppearance:"none",appearance:"none",
+          background:"transparent",outline:"none",
+          height:4,pointerEvents:"none",
+        }}
+        onMouseDown={e=>e.stopPropagation()}
+      />
+
+      {/* High handle */}
+      <input type="range" min={low+step} max={max} step={step} value={high}
+        onChange={e=>onChange(low, Number(e.target.value))}
+        style={{
+          position:"absolute",left:0,right:0,width:"100%",
+          WebkitAppearance:"none",appearance:"none",
+          background:"transparent",outline:"none",
+          height:4,pointerEvents:"none",
+        }}
+        onMouseDown={e=>e.stopPropagation()}
+      />
+    </div>
+  );
+}
+
 // ─── ONBOARDING ──────────────────────────────────────────────────────────────
 function Onboarding({onComplete}){
   const[step,setStep]=useState(0);
@@ -548,25 +610,23 @@ function Onboarding({onComplete}){
         const h=data.tradingHours[day];
         if(!h||!h.open) return null;
         const dr=data.dayRevenue[day];
+        const mid=Math.round((dr.low+dr.high)/2);
         return(
-          <div key={day} style={{marginBottom:24,background:B.white,borderRadius:14,padding:16,boxShadow:"0 1px 6px rgba(28,21,16,0.06)"}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+          <div key={day} style={{marginBottom:20,background:B.white,borderRadius:14,padding:16,boxShadow:"0 1px 6px rgba(28,21,16,0.06)"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
               <p style={{fontSize:15,fontWeight:700,color:B.nearBlack,fontFamily:"system-ui,-apple-system,sans-serif"}}>{day}</p>
-              <p style={{fontSize:16,fontWeight:700,color:B.amber,fontFamily:"system-ui,-apple-system,sans-serif"}}>${dr.value.toLocaleString()}</p>
+              <p style={{fontSize:14,fontWeight:600,color:B.amber,fontFamily:"system-ui,-apple-system,sans-serif"}}>${dr.low.toLocaleString()} — ${dr.high.toLocaleString()}</p>
             </div>
-            <input type="range"
-              min={dr.quiet} max={dr.busy} step={100}
-              value={dr.value}
-              onChange={e=>{
-                const val=Number(e.target.value);
-                setData(d=>({...d,dayRevenue:{...d.dayRevenue,[day]:{...dr,value:val}}}));
-              }}
-              style={{width:"100%",accentColor:B.amber}}/>
-            <div style={{display:"flex",justifyContent:"space-between",marginTop:4}}>
-              <span style={{fontSize:11,color:B.midGrey,fontFamily:"system-ui,-apple-system,sans-serif"}}>Quiet ${dr.quiet.toLocaleString()}</span>
-              <span style={{fontSize:11,color:B.midGrey,fontFamily:"system-ui,-apple-system,sans-serif"}}>Busy ${dr.busy.toLocaleString()}</span>
+            <RangeSlider
+              min={dr.min} max={dr.max}
+              low={dr.low} high={dr.high}
+              onChange={(lo,hi)=>setData(d=>({...d,dayRevenue:{...d.dayRevenue,[day]:{...dr,low:lo,high:hi}}}))}
+            />
+            <div style={{display:"flex",justifyContent:"space-between",marginTop:2}}>
+              <span style={{fontSize:11,color:B.midGrey,fontFamily:"system-ui,-apple-system,sans-serif"}}>Quiet ${dr.min.toLocaleString()}</span>
+              <span style={{fontSize:11,color:B.midGrey,fontFamily:"system-ui,-apple-system,sans-serif"}}>Busy ${dr.max.toLocaleString()}</span>
             </div>
-            <p style={{fontSize:11,color:B.warmGrey,marginTop:4,fontFamily:"system-ui,-apple-system,sans-serif"}}>{calcRoles(dr.value,data.hasKitchen,data.servesAlcohol).note}</p>
+            <p style={{fontSize:11,color:B.warmGrey,marginTop:4,fontFamily:"system-ui,-apple-system,sans-serif"}}>{calcRoles(mid,data.hasKitchen,data.servesAlcohol).note}</p>
           </div>
         );
       })}
@@ -805,27 +865,26 @@ function VenueSettings({venue, baseRevenue, dayRevenue, onDayRevenueChange, onBa
           const h=local.tradingHours[day];
           if(!h||!h.open) return null;
           const dr=dayRevenue[day]||DEFAULT_DAY_REVENUE[day];
-          const pct=Math.round(((dr.value-dr.quiet)/(dr.busy-dr.quiet))*100);
+          const mid=Math.round((dr.low+dr.high)/2);
           return(
             <div key={day} style={{marginBottom:20}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
                 <p style={{fontSize:14,fontWeight:700,color:B.nearBlack,fontFamily:"system-ui,-apple-system,sans-serif"}}>{day}</p>
-                <p style={{fontSize:14,fontWeight:600,color:B.amber,fontFamily:"system-ui,-apple-system,sans-serif"}}>${dr.value.toLocaleString()}</p>
+                <p style={{fontSize:13,fontWeight:600,color:B.amber,fontFamily:"system-ui,-apple-system,sans-serif"}}>${dr.low.toLocaleString()} — ${dr.high.toLocaleString()}</p>
               </div>
-              <input type="range"
-                min={dr.quiet} max={dr.busy} step={100}
-                value={dr.value}
-                onChange={e=>{
-                  const val=Number(e.target.value);
-                  onDayRevenueChange(prev=>({...prev,[day]:{...dr,value:val}}));
+              <RangeSlider
+                min={dr.min} max={dr.max}
+                low={dr.low} high={dr.high}
+                onChange={(lo,hi)=>{
+                  onDayRevenueChange(prev=>({...prev,[day]:{...dr,low:lo,high:hi}}));
                   setSaved(false);
                 }}
-                style={{width:"100%",accentColor:B.amber}}/>
-              <div style={{display:"flex",justifyContent:"space-between",marginTop:3}}>
-                <span style={{fontSize:11,color:B.midGrey,fontFamily:"system-ui,-apple-system,sans-serif"}}>Quiet ${dr.quiet.toLocaleString()}</span>
-                <span style={{fontSize:11,color:B.midGrey,fontFamily:"system-ui,-apple-system,sans-serif"}}>Busy ${dr.busy.toLocaleString()}</span>
+              />
+              <div style={{display:"flex",justifyContent:"space-between",marginTop:2}}>
+                <span style={{fontSize:11,color:B.midGrey,fontFamily:"system-ui,-apple-system,sans-serif"}}>Min ${dr.min.toLocaleString()}</span>
+                <span style={{fontSize:11,color:B.midGrey,fontFamily:"system-ui,-apple-system,sans-serif"}}>Max ${dr.max.toLocaleString()}</span>
               </div>
-              <p style={{fontSize:11,color:B.warmGrey,marginTop:3,fontFamily:"system-ui,-apple-system,sans-serif"}}>{calcRoles(dr.value,local.hasKitchen,local.servesAlcohol).note}</p>
+              <p style={{fontSize:11,color:B.warmGrey,marginTop:3,fontFamily:"system-ui,-apple-system,sans-serif"}}>{calcRoles(mid,local.hasKitchen,local.servesAlcohol).note}</p>
             </div>
           );
         })}
