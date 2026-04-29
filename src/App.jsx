@@ -1335,20 +1335,26 @@ Rules:
 - Return ONLY valid JSON, no other text`
       });
 
-      const response=await fetch("https://api.anthropic.com/v1/messages",{
+      const response=await fetch("/api/analyse",{
         method:"POST",
         headers:{"Content-Type":"application/json"},
         body:JSON.stringify({
-          model:"claude-sonnet-4-20250514",
-          max_tokens:1000,
           messages:[{role:"user",content:imageContent}]
         })
       });
 
+      if(!response.ok){
+        const errData=await response.json().catch(()=>({}));
+        throw new Error(`API error ${response.status}: ${errData.error||response.statusText}`);
+      }
       const data=await response.json();
+      if(data.error) throw new Error(data.error);
       const text=data.content?.find(c=>c.type==="text")?.text||"";
+      if(!text) throw new Error("No response from AI — check your API key in Vercel");
       const clean=text.replace(/```json|```/g,"").trim();
-      const parsed=JSON.parse(clean);
+      let parsed;
+      try{ parsed=JSON.parse(clean); }
+      catch(e){ throw new Error("Couldn't parse roster data. Try a clearer photo."); }
 
       // Calculate analysis
       const dayData={};
@@ -1394,7 +1400,8 @@ Rules:
       setStep(3);
 
     }catch(err){
-      setError("Couldn't read the roster. Try a clearer photo or check your connection.");
+      console.error("Roster analysis error:", err);
+      setError(`Error: ${err.message || "Couldn't read the roster"}. Check console for details.`);
       setStep(1);
     }
   }
