@@ -1284,13 +1284,25 @@ function RosterAnalyser({onSetupVenue, onBack}){
 
   function handleImageUpload(file, type){
     if(!file) return;
-    const reader=new FileReader();
-    reader.onload=e=>{
-      const dataUrl=e.target.result;
+    // Compress image to reduce size for API
+    const img=new Image();
+    const objectUrl=URL.createObjectURL(file);
+    img.onload=()=>{
+      const canvas=document.createElement("canvas");
+      // Max 1200px wide, maintain aspect ratio
+      const maxW=1200;
+      const scale=Math.min(1, maxW/img.width);
+      canvas.width=Math.round(img.width*scale);
+      canvas.height=Math.round(img.height*scale);
+      const ctx=canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      // Compress to JPEG at 0.7 quality
+      const dataUrl=canvas.toDataURL("image/jpeg", 0.7);
+      URL.revokeObjectURL(objectUrl);
       if(type==="roster"){ setRosterImage(dataUrl); setRosterPreview(dataUrl); }
       else{ setTimesheetImage(dataUrl); setTimesheetPreview(dataUrl); }
     };
-    reader.readAsDataURL(file);
+    img.src=objectUrl;
   }
 
   async function analyseRoster(){
@@ -1302,15 +1314,17 @@ function RosterAnalyser({onSetupVenue, onBack}){
       const imageContent=[];
 
       if(rosterImage){
+        const rosterBase64=rosterImage.includes(",") ? rosterImage.split(",")[1] : rosterImage;
         imageContent.push({
           type:"image",
-          source:{type:"base64",media_type:"image/jpeg",data:rosterImage.split(",")[1]}
+          source:{type:"base64",media_type:"image/jpeg",data:rosterBase64}
         });
       }
       if(timesheetImage){
+        const timesheetBase64=timesheetImage.includes(",") ? timesheetImage.split(",")[1] : timesheetImage;
         imageContent.push({
           type:"image",
-          source:{type:"base64",media_type:"image/jpeg",data:timesheetImage.split(",")[1]}
+          source:{type:"base64",media_type:"image/jpeg",data:timesheetBase64}
         });
       }
 
