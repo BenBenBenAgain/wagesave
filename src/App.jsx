@@ -346,7 +346,13 @@ function weatherFromCode(code, temp=18){
 
 function greeting(){const h=new Date().getHours();return h<12?"Good morning.":h<17?"Good afternoon.":"Good evening.";}
 function getWeekDates(offset=0){const now=new Date(),day=now.getDay(),mon=new Date(now);mon.setDate(now.getDate()-(day===0?6:day-1)+offset*7);return DAYS.map((_,i)=>{const d=new Date(mon);d.setDate(mon.getDate()+i);return d;});}
-function dateKey(d){return d.toISOString().slice(0,10);}
+function dateKey(d){
+  // Use local date to avoid UTC timezone shifting the day
+  const y=d.getFullYear();
+  const m=String(d.getMonth()+1).padStart(2,"0");
+  const day=String(d.getDate()).padStart(2,"0");
+  return `${y}-${m}-${day}`;
+}
 function getHoliday(d){return VIC_HOLIDAYS[dateKey(d)]||null;}
 function getEvents(d, localEvents=[]){
   // Combine venue local events
