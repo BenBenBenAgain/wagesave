@@ -123,13 +123,33 @@ function isHolidayKey(dk) {
   return !!VIC_HOLIDAYS[dk];
 }
 
-const DEMO_EVENTS = {
-  "2026-04-17":[{icon:"🏉",label:"AFL Round 4",impact:"+20%",mult:1.20}],
-  "2026-04-18":[{icon:"☀️",label:"Warm weekend",impact:"+12%",mult:1.12}],
-  "2026-04-25":[{icon:"🎖",label:"Anzac Day",impact:"+30%",mult:1.30}],
-  "2026-05-02":[{icon:"🏉",label:"AFL Round 7",impact:"+15%",mult:1.15}],
-  "2026-05-09":[{icon:"🌧",label:"Rain forecast",impact:"-15%",mult:0.85}],
-};
+// ─── LOCAL EVENTS SYSTEM ─────────────────────────────────────────────────────
+// Each event: { id, name, icon, dates:["YYYY-MM-DD",...], impact, mult, recurrence }
+const DEFAULT_LOCAL_EVENTS = [
+  { id:"bh-jet-1",    name:"JET — Barwon Heads Hotel",          icon:"🎸", dates:["2026-05-14"], impact:"+25%", mult:1.25, recurrence:"one-off" },
+  { id:"bh-jet-2",    name:"JET SOLD OUT — Barwon Heads Hotel",  icon:"🎸", dates:["2026-05-15"], impact:"+35%", mult:1.35, recurrence:"one-off" },
+  { id:"bh-cap",      name:"Fabulous Caprettos — BH Hotel",      icon:"🎸", dates:["2026-05-29"], impact:"+25%", mult:1.25, recurrence:"one-off" },
+];
+
+function getLocalEvents(date, localEvents=[]) {
+  const dk = dateKey(date);
+  return localEvents.filter(e => e.dates && e.dates.includes(dk));
+}
+
+function impactToMult(impact) {
+  const p = parseFloat((impact||"0").replace("%","")) / 100;
+  return 1 + p;
+}
+
+const RECURRENCE_OPTIONS = [
+  { key:"one-off",  label:"One-off" },
+  { key:"weekly",   label:"Every week" },
+  { key:"fortnightly", label:"Every fortnight" },
+  { key:"monthly",  label:"Monthly" },
+];
+
+const EVENT_ICONS = ["🎸","🎪","🏉","🏏","🎭","🎨","🌊","🏄","🎯","🍺","🎉","🏪","📅"];
+
 
 const DEFAULT_HOURS = {
   Mon:{open:true, openTime:8, closeTime:15,hasDinner:false,dinnerOpen:17,dinnerClose:21},
@@ -281,20 +301,28 @@ function calcDay(day, baseRev, hasKitchen, servesAlcohol, tradingHours, seasonal
   return {adj, laborBudget, byHour, roles, shifts, peakCover, totalShifts, totalLabourHours, closed:false, seasonMult};
 }
 
-function weatherFromCode(code){
-  if(code>=200&&code<600) return{mult:0.85,label:"🌧 Rain"};
-  if(code>=600&&code<700) return{mult:0.80,label:"🌨 Snow"};
-  if(code>=700&&code<800) return{mult:0.90,label:"🌫 Overcast"};
-  if(code===800)          return{mult:1.15,label:"☀️ Clear"};
-  if(code>800)            return{mult:1.00,label:"🌥 Cloudy"};
-  return{mult:1.00,label:"🌥 Neutral"};
+function weatherFromCode(code, temp=18){
+  if(code>=200&&code<600) return{mult:0.85,label:"🌧 Rain",short:"Rain"};
+  if(code>=600&&code<700) return{mult:0.80,label:"🌨 Snow",short:"Snow"};
+  if(code>=700&&code<800) return{mult:0.90,label:"🌫 Overcast",short:"Overcast"};
+  if(code===800){
+    // Perfect beach day — clear + warm = bigger UV/beach multiplier for coastal venues
+    if(temp>=24) return{mult:1.35,label:"🏖 Perfect beach day",short:"Beach day",uvBoost:true};
+    if(temp>=20) return{mult:1.20,label:"☀️ Sunny & warm",short:"Sunny",uvBoost:true};
+    return{mult:1.10,label:"☀️ Clear",short:"Clear"};
+  }
+  if(code>800) return{mult:1.00,label:"🌥 Cloudy",short:"Cloudy"};
+  return{mult:1.00,label:"🌥 Neutral",short:"Neutral"};
 }
 
 function greeting(){const h=new Date().getHours();return h<12?"Good morning.":h<17?"Good afternoon.":"Good evening.";}
 function getWeekDates(offset=0){const now=new Date(),day=now.getDay(),mon=new Date(now);mon.setDate(now.getDate()-(day===0?6:day-1)+offset*7);return DAYS.map((_,i)=>{const d=new Date(mon);d.setDate(mon.getDate()+i);return d;});}
 function dateKey(d){return d.toISOString().slice(0,10);}
 function getHoliday(d){return VIC_HOLIDAYS[dateKey(d)]||null;}
-function getEvents(d){return DEMO_EVENTS[dateKey(d)]||[];}
+function getEvents(d, localEvents=[]){
+  // Combine venue local events
+  return getLocalEvents(d, localEvents);
+}
 
 // ─── MICRO COMPONENTS ────────────────────────────────────────────────────────
 function Label({text}){
@@ -700,10 +728,10 @@ function Onboarding({onComplete}){
 }
 
 // ─── DAY DRAWER ──────────────────────────────────────────────────────────────
-function DayDrawer({dayData,onActualChange,actual,feedback,onFeedback,onClose,venueName}){
+function DayDrawer({dayData,onActualChange,actual,feedback,onFeedback,onClose,venueName,localEvents=[]}){
   const{day,date,roles,adj,laborBudget,byHour,shifts,closed}=dayData;
   const holiday=getHoliday(date);
-  const events=getEvents(date);
+  const events=getEvents(date, localEvents);
   const flags=[...events];
   if(holiday) flags.unshift({icon:"🎉",label:holiday,impact:"+25%"});
   if(isSchoolHoliday(date)&&!holiday) flags.push({icon:"🏫",label:"School holidays",impact:"+15%"});
@@ -821,8 +849,140 @@ function DayDrawer({dayData,onActualChange,actual,feedback,onFeedback,onClose,ve
   );
 }
 
+// ─── ADD EVENT FORM ──────────────────────────────────────────────────────────
+function AddEventForm({onAdd}){
+  const[open,setOpen]=useState(false);
+  const[form,setForm]=useState({
+    name:"",icon:"🎸",
+    date:"",impact:"+20%",
+    recurrence:"one-off",
+  });
+
+  function submit(){
+    if(!form.name||!form.date) return;
+    onAdd({
+      id:`custom-${Date.now()}`,
+      name:form.name,
+      icon:form.icon,
+      dates:[form.date],
+      impact:form.impact,
+      mult:impactToMult(form.impact),
+      recurrence:form.recurrence,
+    });
+    setForm({name:"",icon:"🎸",date:"",impact:"+20%",recurrence:"one-off"});
+    setOpen(false);
+  }
+
+  const inputStyle={width:"100%",padding:"11px 14px",borderRadius:10,
+    border:`1.5px solid ${B.midGrey}`,fontSize:14,
+    fontFamily:"system-ui,-apple-system,sans-serif",
+    color:B.nearBlack,background:B.white,outline:"none",
+    boxSizing:"border-box"};
+
+  if(!open) return(
+    <button onClick={()=>setOpen(true)} style={{
+      width:"100%",padding:"12px 0",borderRadius:12,
+      border:`1.5px dashed ${B.amber}`,background:"transparent",
+      color:B.amberDark,fontSize:14,fontWeight:600,
+      cursor:"pointer",fontFamily:"system-ui,-apple-system,sans-serif",
+    }}>+ Add local event</button>
+  );
+
+  return(
+    <div style={{background:B.white,borderRadius:14,padding:16,border:`1.5px solid ${B.amber}`}}>
+      <p style={{fontSize:14,fontWeight:600,color:B.nearBlack,marginBottom:14,
+        fontFamily:"system-ui,-apple-system,sans-serif"}}>New local event</p>
+
+      {/* Icon picker */}
+      <div style={{marginBottom:12}}>
+        <p style={{fontSize:11,color:B.warmGrey,marginBottom:8,fontFamily:"system-ui,-apple-system,sans-serif",textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:600}}>Icon</p>
+        <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+          {EVENT_ICONS.map(ic=>(
+            <button key={ic} onClick={()=>setForm(f=>({...f,icon:ic}))} style={{
+              width:36,height:36,borderRadius:8,fontSize:18,
+              border:`1.5px solid ${form.icon===ic?B.amber:B.lightGrey}`,
+              background:form.icon===ic?B.amberLight:"transparent",
+              cursor:"pointer",
+            }}>{ic}</button>
+          ))}
+        </div>
+      </div>
+
+      {/* Name */}
+      <div style={{marginBottom:12}}>
+        <p style={{fontSize:11,color:B.warmGrey,marginBottom:6,fontFamily:"system-ui,-apple-system,sans-serif",textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:600}}>Event name</p>
+        <input style={inputStyle} placeholder="e.g. JET — Barwon Heads Hotel"
+          value={form.name} onChange={e=>setForm(f=>({...f,name:e.target.value}))}
+          onFocus={e=>e.target.style.borderColor=B.amber}
+          onBlur={e=>e.target.style.borderColor=B.midGrey}/>
+      </div>
+
+      {/* Date */}
+      <div style={{marginBottom:12}}>
+        <p style={{fontSize:11,color:B.warmGrey,marginBottom:6,fontFamily:"system-ui,-apple-system,sans-serif",textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:600}}>Date</p>
+        <input type="date" style={inputStyle} value={form.date}
+          onChange={e=>setForm(f=>({...f,date:e.target.value}))}
+          onFocus={e=>e.target.style.borderColor=B.amber}
+          onBlur={e=>e.target.style.borderColor=B.midGrey}/>
+      </div>
+
+      {/* Impact */}
+      <div style={{marginBottom:12}}>
+        <p style={{fontSize:11,color:B.warmGrey,marginBottom:8,fontFamily:"system-ui,-apple-system,sans-serif",textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:600}}>
+          Expected impact on trade
+        </p>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          {["+10%","+20%","+30%","+40%","-10%","-20%"].map(imp=>(
+            <button key={imp} onClick={()=>setForm(f=>({...f,impact:imp}))} style={{
+              padding:"8px 14px",borderRadius:100,fontSize:13,fontWeight:600,
+              cursor:"pointer",fontFamily:"system-ui,-apple-system,sans-serif",
+              border:`1.5px solid ${form.impact===imp?B.amber:B.midGrey}`,
+              background:form.impact===imp?B.amberLight:"transparent",
+              color:form.impact===imp?B.amberDark:B.warmGrey,
+              transition:"all 0.15s",
+            }}>{imp}</button>
+          ))}
+        </div>
+      </div>
+
+      {/* Recurrence */}
+      <div style={{marginBottom:16}}>
+        <p style={{fontSize:11,color:B.warmGrey,marginBottom:8,fontFamily:"system-ui,-apple-system,sans-serif",textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:600}}>How often?</p>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          {RECURRENCE_OPTIONS.map(r=>(
+            <button key={r.key} onClick={()=>setForm(f=>({...f,recurrence:r.key}))} style={{
+              padding:"8px 14px",borderRadius:100,fontSize:13,fontWeight:600,
+              cursor:"pointer",fontFamily:"system-ui,-apple-system,sans-serif",
+              border:`1.5px solid ${form.recurrence===r.key?B.amber:B.midGrey}`,
+              background:form.recurrence===r.key?B.amberLight:"transparent",
+              color:form.recurrence===r.key?B.amberDark:B.warmGrey,
+              transition:"all 0.15s",
+            }}>{r.label}</button>
+          ))}
+        </div>
+      </div>
+
+      <div style={{display:"flex",gap:10}}>
+        <button onClick={submit} disabled={!form.name||!form.date} style={{
+          flex:2,padding:"12px 0",borderRadius:12,
+          background:form.name&&form.date?B.amber:"#D4C9BB",
+          color:B.white,border:"none",fontSize:14,fontWeight:700,
+          cursor:form.name&&form.date?"pointer":"not-allowed",
+          fontFamily:"system-ui,-apple-system,sans-serif",
+        }}>Add event</button>
+        <button onClick={()=>setOpen(false)} style={{
+          flex:1,padding:"12px 0",borderRadius:12,
+          background:"transparent",border:`1.5px solid ${B.midGrey}`,
+          color:B.warmGrey,fontSize:14,fontWeight:600,cursor:"pointer",
+          fontFamily:"system-ui,-apple-system,sans-serif",
+        }}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
 // ─── VENUE SETTINGS ──────────────────────────────────────────────────────────
-function VenueSettings({venue, baseRevenue, dayRevenue, onDayRevenueChange, onBaseRevenueChange, onVenueUpdate, onReset}){
+function VenueSettings({venue, baseRevenue, dayRevenue, localEvents, onLocalEventsChange, onDayRevenueChange, onBaseRevenueChange, onVenueUpdate, onReset}){
   const[local,setLocal]=useState({...venue});
   const[saved,setSaved]=useState(false);
 
@@ -973,6 +1133,31 @@ function VenueSettings({venue, baseRevenue, dayRevenue, onDayRevenueChange, onBa
         )}
       </div>
 
+      {/* Local Events */}
+      <div style={sectionStyle}>
+        <Label text="Local events"/>
+        <p style={{fontSize:12,color:B.warmGrey,marginBottom:16,lineHeight:1.5,fontFamily:"system-ui,-apple-system,sans-serif"}}>
+          Add nearby events that affect your trade — gigs at the local pub, markets, sporting events.
+        </p>
+
+        {localEvents.map((ev,i)=>(
+          <div key={ev.id} style={{background:B.amberPale,borderRadius:12,padding:14,marginBottom:10,border:`1px solid ${B.lightGrey}`}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <span style={{fontSize:18}}>{ev.icon}</span>
+                <p style={{fontSize:14,fontWeight:600,color:B.nearBlack,fontFamily:"system-ui,-apple-system,sans-serif"}}>{ev.name}</p>
+              </div>
+              <button onClick={()=>onLocalEventsChange(prev=>prev.filter((_,j)=>j!==i))} style={{fontSize:16,color:B.warmGrey,background:"none",border:"none",cursor:"pointer",padding:"0 4px"}}>×</button>
+            </div>
+            <p style={{fontSize:12,color:B.warmGrey,fontFamily:"system-ui,-apple-system,sans-serif"}}>
+              {ev.dates?.join(", ")} · {ev.impact} · {ev.recurrence}
+            </p>
+          </div>
+        ))}
+
+        <AddEventForm onAdd={ev=>{onLocalEventsChange(prev=>[...prev,ev]);setSaved(false);}}/>
+      </div>
+
       {/* Reset */}
       <button onClick={()=>{if(window.confirm("Reset WageSave and start over? All venue data will be cleared.")) onReset();}} style={{width:"100%",padding:"11px 0",borderRadius:12,border:`1.5px solid ${B.danger}`,background:"transparent",color:B.danger,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"system-ui,-apple-system,sans-serif"}}>Reset venue &amp; start over</button>
     </div>
@@ -998,18 +1183,20 @@ function MainApp({venue, onReset}){
   const currentMonthName=new Date().toLocaleString("en-AU",{month:"long"});
   const[baseRevenue,setBaseRevenue]=useState(()=>{ try{const s=localStorage.getItem("wagesave_base_revenue");return s?Number(s):venue.baseRevenue||2500}catch{return venue.baseRevenue||2500}});
   const[dayRevenue,setDayRevenue]=useState(()=>{ try{const s=localStorage.getItem("wagesave_day_revenue");return s?JSON.parse(s):venue.dayRevenue||{...DEFAULT_DAY_REVENUE}}catch{return venue.dayRevenue||{...DEFAULT_DAY_REVENUE}}});
+  const[localEvents,setLocalEvents]=useState(()=>{ try{const s=localStorage.getItem("wagesave_local_events");return s?JSON.parse(s):[...DEFAULT_LOCAL_EVENTS]}catch{return[...DEFAULT_LOCAL_EVENTS]}});
 
   useEffect(()=>{
     if(!navigator.geolocation) return;
     navigator.geolocation.getCurrentPosition(pos=>{
       fetch(`https://api.openweathermap.org/data/2.5/weather?lat=${pos.coords.latitude}&lon=${pos.coords.longitude}&appid=8c9686f901d9e2180d4328a24d2da88f&units=metric`)
-        .then(r=>r.json()).then(d=>{if(d.cod!==200)return;setWeather({...weatherFromCode(d.weather[0].id),temp:Math.round(d.main.temp),city:d.name});}).catch(()=>{});
+        .then(r=>r.json()).then(d=>{if(d.cod!==200)return;const temp=Math.round(d.main.temp);setWeather({...weatherFromCode(d.weather[0].id,temp),temp,city:d.name});}).catch(()=>{});
     },()=>{},{timeout:8000});
   },[]);
 
   // Persist state to localStorage
   useEffect(()=>{try{localStorage.setItem("wagesave_actual",JSON.stringify(actual));}catch{}},[actual]);
   useEffect(()=>{try{localStorage.setItem("wagesave_day_revenue",JSON.stringify(dayRevenue));}catch{}},[dayRevenue]);
+  useEffect(()=>{try{localStorage.setItem("wagesave_local_events",JSON.stringify(localEvents));}catch{}},[localEvents]);
   useEffect(()=>{try{localStorage.setItem("wagesave_feedback",JSON.stringify(feedback));}catch{}},[feedback]);
   useEffect(()=>{try{localStorage.setItem("wagesave_base_revenue",String(baseRevenue));}catch{}},[baseRevenue]);
 
@@ -1027,7 +1214,7 @@ function MainApp({venue, onReset}){
 
   const weekData=DAYS.map((day,i)=>{
     const date=weekDates[i];
-    const events=getEvents(date);
+    const events=getEvents(date, localEvents);
     const holiday=getHoliday(date);
     const flags=[...events];
     if(holiday) flags.unshift({icon:"🎉",label:holiday,impact:"+25%",mult:1.25});
@@ -1152,6 +1339,8 @@ function MainApp({venue, onReset}){
             venue={venue}
             baseRevenue={baseRevenue}
             dayRevenue={dayRevenue}
+            localEvents={localEvents}
+            onLocalEventsChange={setLocalEvents}
             onDayRevenueChange={setDayRevenue}
             onBaseRevenueChange={setBaseRevenue}
             onVenueUpdate={v=>{
@@ -1254,6 +1443,7 @@ function MainApp({venue, onReset}){
           key={selectedDay}
           dayData={selectedData}
           venueName={venue.name}
+          localEvents={localEvents}
           actual={actual[selectedDay]||0}
           onActualChange={v=>setActual(p=>({...p,[selectedDay]:v}))}
           feedback={feedback[`${selectedDay}-${dateKey(selectedData.date)}`]}
@@ -1446,7 +1636,7 @@ Rules:
           <p style={{fontSize:13,fontWeight:600,color:B.nearBlack,marginBottom:10,fontFamily:"system-ui,-apple-system,sans-serif",letterSpacing:"0.02em"}}>
             ROSTER <span style={{color:B.amber}}>*</span>
           </p>
-          <input ref={rosterRef} type="file" accept="image/*" capture="environment"
+          <input ref={rosterRef} type="file" accept="image/*"
             onChange={e=>handleImageUpload(e.target.files[0],"roster")}
             style={{display:"none"}}/>
           {rosterPreview?(
@@ -1476,7 +1666,7 @@ Rules:
           <p style={{fontSize:13,fontWeight:600,color:B.nearBlack,marginBottom:10,fontFamily:"system-ui,-apple-system,sans-serif",letterSpacing:"0.02em"}}>
             TIMESHEET <span style={{color:B.warmGrey,fontWeight:400}}>— optional, more accurate</span>
           </p>
-          <input ref={timesheetRef} type="file" accept="image/*" capture="environment"
+          <input ref={timesheetRef} type="file" accept="image/*"
             onChange={e=>handleImageUpload(e.target.files[0],"timesheet")}
             style={{display:"none"}}/>
           {timesheetPreview?(
@@ -1711,7 +1901,7 @@ export default function WageSave(){
   }
 
   function handleReset(){
-    try{["wagesave_venue","wagesave_actual","wagesave_feedback","wagesave_base_revenue","wagesave_csv_dismissed","wagesave_day_revenue"].forEach(k=>localStorage.removeItem(k));}catch{}
+    try{["wagesave_venue","wagesave_actual","wagesave_feedback","wagesave_base_revenue","wagesave_csv_dismissed","wagesave_day_revenue","wagesave_local_events"].forEach(k=>localStorage.removeItem(k));}catch{}
     setVenue(null);
     setMode("home");
   }
