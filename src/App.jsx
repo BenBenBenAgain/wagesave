@@ -133,7 +133,31 @@ const DEFAULT_LOCAL_EVENTS = [
 
 function getLocalEvents(date, localEvents=[]) {
   const dk = dateKey(date);
-  return localEvents.filter(e => e.dates && e.dates.includes(dk));
+  const dateMs = new Date(dk).getTime();
+
+  return localEvents.filter(ev => {
+    if (!ev.dates || ev.dates.length === 0) return false;
+    const startDk = ev.dates[0];
+    const startMs = new Date(startDk).getTime();
+
+    if (ev.recurrence === "one-off") {
+      return startDk === dk;
+    }
+
+    // Must be on or after the start date
+    if (dateMs < startMs) return false;
+
+    const diffDays = Math.round((dateMs - startMs) / (1000 * 60 * 60 * 24));
+
+    if (ev.recurrence === "weekly")      return diffDays % 7 === 0;
+    if (ev.recurrence === "fortnightly") return diffDays % 14 === 0;
+    if (ev.recurrence === "monthly") {
+      const startDate = new Date(startDk);
+      const checkDate = new Date(dk);
+      return startDate.getDate() === checkDate.getDate();
+    }
+    return startDk === dk;
+  });
 }
 
 function impactToMult(impact) {
@@ -849,6 +873,270 @@ function DayDrawer({dayData,onActualChange,actual,feedback,onFeedback,onClose,ve
   );
 }
 
+// ─── STAFF PROFILES ──────────────────────────────────────────────────────────
+const ROLES = ["Kitchen","Coffee","Floor","Bar"];
+const ABILITY_LEVELS = [
+  {key:0, label:"—",       short:"—",  color:B.midGrey},
+  {key:1, label:"Learning", short:"⭐",  color:"#E65100"},
+  {key:2, label:"Competent",short:"⭐⭐", color:B.amberDark},
+  {key:3, label:"Strong",   short:"⭐⭐⭐",color:B.success},
+];
+
+function newStaffMember(name=""){
+  return {
+    id: `staff-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+    name,
+    roles: { Kitchen:0, Coffee:0, Floor:0, Bar:0 },
+    minHours: 8,
+    preferredHours: 20,
+    preferredDays: [],
+    unavailableDays: [],
+  };
+}
+
+function StaffAbilityPicker({role, value, onChange}){
+  return(
+    <div style={{display:"flex",gap:6}}>
+      {ABILITY_LEVELS.map(level=>(
+        <button key={level.key} onClick={()=>onChange(level.key)} style={{
+          flex:1,padding:"8px 4px",borderRadius:10,fontSize:12,fontWeight:600,
+          cursor:"pointer",fontFamily:"system-ui,-apple-system,sans-serif",
+          border:`1.5px solid ${value===level.key?level.color:B.lightGrey}`,
+          background:value===level.key?`${level.color}18`:B.white,
+          color:value===level.key?level.color:B.warmGrey,
+          transition:"all 0.15s",
+        }}>{level.key===0?"—":level.short}</button>
+      ))}
+    </div>
+  );
+}
+
+function StaffCard({member, onEdit, onDelete}){
+  const activeRoles = ROLES.filter(r=>member.roles[r]>0);
+  return(
+    <div style={{background:B.white,borderRadius:14,padding:16,marginBottom:10,
+      border:`1.5px solid ${B.lightGrey}`,
+      boxShadow:"0 1px 4px rgba(28,21,16,0.05)"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+        <div>
+          <p style={{fontSize:15,fontWeight:700,color:B.nearBlack,marginBottom:4,
+            fontFamily:"system-ui,-apple-system,sans-serif"}}>{member.name}</p>
+          <p style={{fontSize:12,color:B.warmGrey,marginBottom:4,
+            fontFamily:"system-ui,-apple-system,sans-serif"}}>
+            {activeRoles.map(r=>{
+              const a=ABILITY_LEVELS.find(l=>l.key===member.roles[r]);
+              return `${r} ${a?.short||""}`;
+            }).join(" · ")||"No roles set"}
+          </p>
+          <p style={{fontSize:12,color:B.warmGrey,
+            fontFamily:"system-ui,-apple-system,sans-serif"}}>
+            {member.minHours}–{member.preferredHours}h/week
+            {member.preferredDays.length>0?` · Prefers ${member.preferredDays.join(", ")}` :""}
+          </p>
+        </div>
+        <div style={{display:"flex",gap:8}}>
+          <button onClick={onEdit} style={{fontSize:13,color:B.amber,background:"none",
+            border:`1px solid ${B.amber}`,borderRadius:8,padding:"4px 10px",
+            cursor:"pointer",fontFamily:"system-ui,-apple-system,sans-serif",fontWeight:600}}>
+            Edit
+          </button>
+          <button onClick={onDelete} style={{fontSize:13,color:B.danger,background:"none",
+            border:"none",cursor:"pointer",fontFamily:"system-ui,-apple-system,sans-serif"}}>
+            ×
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StaffEditor({member, onSave, onCancel}){
+  const[local,setLocal]=useState({...member,roles:{...member.roles}});
+
+  const inputStyle={width:"100%",padding:"11px 14px",borderRadius:10,
+    border:`1.5px solid ${B.midGrey}`,fontSize:15,
+    fontFamily:"system-ui,-apple-system,sans-serif",
+    color:B.nearBlack,background:B.white,outline:"none",boxSizing:"border-box"};
+
+  return(
+    <div style={{background:B.white,borderRadius:16,padding:20,marginBottom:12,
+      border:`1.5px solid ${B.amber}`,
+      boxShadow:`0 2px 12px rgba(232,160,32,0.15)`}}>
+
+      {/* Name */}
+      <div style={{marginBottom:16}}>
+        <p style={{fontSize:11,color:B.warmGrey,marginBottom:6,fontFamily:"system-ui,-apple-system,sans-serif",
+          textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:600}}>Name</p>
+        <input style={inputStyle} placeholder="e.g. Jill"
+          value={local.name} onChange={e=>setLocal(l=>({...l,name:e.target.value}))}
+          onFocus={e=>e.target.style.borderColor=B.amber}
+          onBlur={e=>e.target.style.borderColor=B.midGrey}/>
+      </div>
+
+      {/* Role abilities */}
+      <div style={{marginBottom:16}}>
+        <p style={{fontSize:11,color:B.warmGrey,marginBottom:10,fontFamily:"system-ui,-apple-system,sans-serif",
+          textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:600}}>Role ability</p>
+        {ROLES.map(role=>(
+          <div key={role} style={{display:"flex",alignItems:"center",gap:12,marginBottom:10}}>
+            <p style={{fontSize:14,fontWeight:600,color:B.nearBlack,width:64,flexShrink:0,
+              fontFamily:"system-ui,-apple-system,sans-serif"}}>{role}</p>
+            <div style={{flex:1}}>
+              <StaffAbilityPicker role={role} value={local.roles[role]||0}
+                onChange={v=>setLocal(l=>({...l,roles:{...l.roles,[role]:v}}))}/>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Hours */}
+      <div style={{display:"flex",gap:12,marginBottom:16}}>
+        <div style={{flex:1}}>
+          <p style={{fontSize:11,color:B.warmGrey,marginBottom:6,fontFamily:"system-ui,-apple-system,sans-serif",
+            textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:600}}>Min hrs/week</p>
+          <input type="number" min={0} max={40} style={inputStyle}
+            value={local.minHours}
+            onChange={e=>setLocal(l=>({...l,minHours:Number(e.target.value)}))}
+            onFocus={e=>e.target.style.borderColor=B.amber}
+            onBlur={e=>e.target.style.borderColor=B.midGrey}/>
+        </div>
+        <div style={{flex:1}}>
+          <p style={{fontSize:11,color:B.warmGrey,marginBottom:6,fontFamily:"system-ui,-apple-system,sans-serif",
+            textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:600}}>Preferred hrs/week</p>
+          <input type="number" min={0} max={40} style={inputStyle}
+            value={local.preferredHours}
+            onChange={e=>setLocal(l=>({...l,preferredHours:Number(e.target.value)}))}
+            onFocus={e=>e.target.style.borderColor=B.amber}
+            onBlur={e=>e.target.style.borderColor=B.midGrey}/>
+        </div>
+      </div>
+
+      {/* Preferred days */}
+      <div style={{marginBottom:16}}>
+        <p style={{fontSize:11,color:B.warmGrey,marginBottom:8,fontFamily:"system-ui,-apple-system,sans-serif",
+          textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:600}}>Preferred days</p>
+        <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+          {["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map(d=>{
+            const active=(local.preferredDays||[]).includes(d);
+            return(
+              <button key={d} onClick={()=>setLocal(l=>({...l,
+                preferredDays:active
+                  ?(l.preferredDays||[]).filter(x=>x!==d)
+                  :[...(l.preferredDays||[]),d]
+              }))} style={{
+                padding:"7px 12px",borderRadius:100,fontSize:12,fontWeight:600,
+                cursor:"pointer",fontFamily:"system-ui,-apple-system,sans-serif",
+                border:`1.5px solid ${active?B.amber:B.midGrey}`,
+                background:active?B.amberLight:B.white,
+                color:active?B.amberDark:B.warmGrey,
+                transition:"all 0.15s",
+              }}>{d}</button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Unavailable days */}
+      <div style={{marginBottom:20}}>
+        <p style={{fontSize:11,color:B.warmGrey,marginBottom:8,fontFamily:"system-ui,-apple-system,sans-serif",
+          textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:600}}>Can't work</p>
+        <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+          {["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map(d=>{
+            const active=(local.unavailableDays||[]).includes(d);
+            return(
+              <button key={d} onClick={()=>setLocal(l=>({...l,
+                unavailableDays:active
+                  ?(l.unavailableDays||[]).filter(x=>x!==d)
+                  :[...(l.unavailableDays||[]),d]
+              }))} style={{
+                padding:"7px 12px",borderRadius:100,fontSize:12,fontWeight:600,
+                cursor:"pointer",fontFamily:"system-ui,-apple-system,sans-serif",
+                border:`1.5px solid ${active?"#C0392B":B.midGrey}`,
+                background:active?"#FDECEA":B.white,
+                color:active?"#C0392B":B.warmGrey,
+                transition:"all 0.15s",
+              }}>{d}</button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div style={{display:"flex",gap:10}}>
+        <button onClick={()=>local.name?onSave(local):null} style={{
+          flex:2,padding:"13px 0",borderRadius:12,
+          background:local.name?B.amber:"#D4C9BB",
+          color:B.white,border:"none",fontSize:15,fontWeight:700,
+          cursor:local.name?"pointer":"not-allowed",
+          fontFamily:"system-ui,-apple-system,sans-serif",
+          boxShadow:local.name?`0 4px 16px rgba(232,160,32,0.3)`:"none",
+        }}>Save</button>
+        <button onClick={onCancel} style={{
+          flex:1,padding:"13px 0",borderRadius:12,
+          background:"transparent",border:`1.5px solid ${B.midGrey}`,
+          color:B.warmGrey,fontSize:14,fontWeight:600,cursor:"pointer",
+          fontFamily:"system-ui,-apple-system,sans-serif",
+        }}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+function StaffManager({staff, onStaffChange}){
+  const[editing,setEditing]=useState(null); // id or "new"
+  const[newMember,setNewMember]=useState(null);
+
+  function addNew(){
+    const m=newStaffMember();
+    setNewMember(m);
+    setEditing("new");
+  }
+
+  function saveNew(member){
+    onStaffChange([...staff,member]);
+    setEditing(null);
+    setNewMember(null);
+  }
+
+  function saveEdit(updated){
+    onStaffChange(staff.map(s=>s.id===updated.id?updated:s));
+    setEditing(null);
+  }
+
+  function deleteMember(id){
+    if(window.confirm("Remove this staff member?"))
+      onStaffChange(staff.filter(s=>s.id!==id));
+  }
+
+  return(
+    <div>
+      {staff.map(member=>(
+        editing===member.id?(
+          <StaffEditor key={member.id} member={member}
+            onSave={saveEdit}
+            onCancel={()=>setEditing(null)}/>
+        ):(
+          <StaffCard key={member.id} member={member}
+            onEdit={()=>setEditing(member.id)}
+            onDelete={()=>deleteMember(member.id)}/>
+        )
+      ))}
+
+      {editing==="new"&&newMember?(
+        <StaffEditor member={newMember}
+          onSave={saveNew}
+          onCancel={()=>{setEditing(null);setNewMember(null);}}/>
+      ):(
+        <button onClick={addNew} style={{
+          width:"100%",padding:"12px 0",borderRadius:12,
+          border:`1.5px dashed ${B.amber}`,background:"transparent",
+          color:B.amberDark,fontSize:14,fontWeight:600,
+          cursor:"pointer",fontFamily:"system-ui,-apple-system,sans-serif",
+        }}>+ Add staff member</button>
+      )}
+    </div>
+  );
+}
+
 // ─── ADD EVENT FORM ──────────────────────────────────────────────────────────
 function AddEventForm({onAdd}){
   const[open,setOpen]=useState(false);
@@ -982,7 +1270,7 @@ function AddEventForm({onAdd}){
 }
 
 // ─── VENUE SETTINGS ──────────────────────────────────────────────────────────
-function VenueSettings({venue, baseRevenue, dayRevenue, localEvents, onLocalEventsChange, onDayRevenueChange, onBaseRevenueChange, onVenueUpdate, onReset}){
+function VenueSettings({venue, baseRevenue, dayRevenue, localEvents, staff, onStaffChange, onLocalEventsChange, onDayRevenueChange, onBaseRevenueChange, onVenueUpdate, onReset}){
   const[local,setLocal]=useState({...venue});
   const[saved,setSaved]=useState(false);
 
@@ -1133,6 +1421,15 @@ function VenueSettings({venue, baseRevenue, dayRevenue, localEvents, onLocalEven
         )}
       </div>
 
+      {/* Staff */}
+      <div style={sectionStyle}>
+        <Label text="Your team"/>
+        <p style={{fontSize:12,color:B.warmGrey,marginBottom:16,lineHeight:1.5,fontFamily:"system-ui,-apple-system,sans-serif"}}>
+          Add your staff — their roles, ability and hours. WageSave uses this to suggest who works each shift.
+        </p>
+        <StaffManager staff={staff||[]} onStaffChange={v=>{onStaffChange(v);setSaved(false);}}/>
+      </div>
+
       {/* Local Events */}
       <div style={sectionStyle}>
         <Label text="Local events"/>
@@ -1184,6 +1481,7 @@ function MainApp({venue, onReset}){
   const[baseRevenue,setBaseRevenue]=useState(()=>{ try{const s=localStorage.getItem("wagesave_base_revenue");return s?Number(s):venue.baseRevenue||2500}catch{return venue.baseRevenue||2500}});
   const[dayRevenue,setDayRevenue]=useState(()=>{ try{const s=localStorage.getItem("wagesave_day_revenue");return s?JSON.parse(s):venue.dayRevenue||{...DEFAULT_DAY_REVENUE}}catch{return venue.dayRevenue||{...DEFAULT_DAY_REVENUE}}});
   const[localEvents,setLocalEvents]=useState(()=>{ try{const s=localStorage.getItem("wagesave_local_events");return s?JSON.parse(s):[...DEFAULT_LOCAL_EVENTS]}catch{return[...DEFAULT_LOCAL_EVENTS]}});
+  const[staff,setStaff]=useState(()=>{ try{const s=localStorage.getItem("wagesave_staff");return s?JSON.parse(s):[]}catch{return[]}});
 
   useEffect(()=>{
     if(!navigator.geolocation) return;
@@ -1197,6 +1495,7 @@ function MainApp({venue, onReset}){
   useEffect(()=>{try{localStorage.setItem("wagesave_actual",JSON.stringify(actual));}catch{}},[actual]);
   useEffect(()=>{try{localStorage.setItem("wagesave_day_revenue",JSON.stringify(dayRevenue));}catch{}},[dayRevenue]);
   useEffect(()=>{try{localStorage.setItem("wagesave_local_events",JSON.stringify(localEvents));}catch{}},[localEvents]);
+  useEffect(()=>{try{localStorage.setItem("wagesave_staff",JSON.stringify(staff));}catch{}},[staff]);
   useEffect(()=>{try{localStorage.setItem("wagesave_feedback",JSON.stringify(feedback));}catch{}},[feedback]);
   useEffect(()=>{try{localStorage.setItem("wagesave_base_revenue",String(baseRevenue));}catch{}},[baseRevenue]);
 
@@ -1340,6 +1639,8 @@ function MainApp({venue, onReset}){
             baseRevenue={baseRevenue}
             dayRevenue={dayRevenue}
             localEvents={localEvents}
+            staff={staff}
+            onStaffChange={setStaff}
             onLocalEventsChange={setLocalEvents}
             onDayRevenueChange={setDayRevenue}
             onBaseRevenueChange={setBaseRevenue}
@@ -1901,7 +2202,7 @@ export default function WageSave(){
   }
 
   function handleReset(){
-    try{["wagesave_venue","wagesave_actual","wagesave_feedback","wagesave_base_revenue","wagesave_csv_dismissed","wagesave_day_revenue","wagesave_local_events"].forEach(k=>localStorage.removeItem(k));}catch{}
+    try{["wagesave_venue","wagesave_actual","wagesave_feedback","wagesave_base_revenue","wagesave_csv_dismissed","wagesave_day_revenue","wagesave_local_events","wagesave_staff"].forEach(k=>localStorage.removeItem(k));}catch{}
     setVenue(null);
     setMode("home");
   }
