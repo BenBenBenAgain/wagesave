@@ -131,30 +131,35 @@ const DEFAULT_LOCAL_EVENTS = [
   { id:"bh-cap",      name:"Fabulous Caprettos — BH Hotel",      icon:"🎸", dates:["2026-05-29"], impact:"+25%", mult:1.25, recurrence:"one-off" },
 ];
 
+function dateToLocal(dateStr){
+  // Parse YYYY-MM-DD as local date, not UTC — avoids timezone offset shifting day
+  const[y,m,d]=dateStr.split("-").map(Number);
+  return new Date(y,m-1,d);
+}
+
 function getLocalEvents(date, localEvents=[]) {
   const dk = dateKey(date);
-  const dateMs = new Date(dk).getTime();
 
   return localEvents.filter(ev => {
     if (!ev.dates || ev.dates.length === 0) return false;
     const startDk = ev.dates[0];
-    const startMs = new Date(startDk).getTime();
 
     if (ev.recurrence === "one-off") {
       return startDk === dk;
     }
 
     // Must be on or after the start date
-    if (dateMs < startMs) return false;
+    const startLocal = dateToLocal(startDk);
+    const checkLocal = dateToLocal(dk);
+    if (checkLocal < startLocal) return false;
 
-    const diffDays = Math.round((dateMs - startMs) / (1000 * 60 * 60 * 24));
+    const diffMs = checkLocal.getTime() - startLocal.getTime();
+    const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
 
     if (ev.recurrence === "weekly")      return diffDays % 7 === 0;
     if (ev.recurrence === "fortnightly") return diffDays % 14 === 0;
     if (ev.recurrence === "monthly") {
-      const startDate = new Date(startDk);
-      const checkDate = new Date(dk);
-      return startDate.getDate() === checkDate.getDate();
+      return startLocal.getDate() === checkLocal.getDate();
     }
     return startDk === dk;
   });
@@ -887,10 +892,10 @@ function newStaffMember(name=""){
     id: `staff-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
     name,
     roles: { Kitchen:0, Coffee:0, Floor:0, Bar:0 },
-    minHours: 8,
     preferredHours: 20,
     preferredDays: [],
     unavailableDays: [],
+    unavailableDates: [],
   };
 }
 
@@ -930,8 +935,8 @@ function StaffCard({member, onEdit, onDelete}){
           </p>
           <p style={{fontSize:12,color:B.warmGrey,
             fontFamily:"system-ui,-apple-system,sans-serif"}}>
-            {member.minHours}–{member.preferredHours}h/week
-            {member.preferredDays.length>0?` · Prefers ${member.preferredDays.join(", ")}` :""}
+            {member.preferredHours}h/week preferred
+            {(member.preferredDays||[]).length>0?` · Prefers ${member.preferredDays.join(", ")}` :""}
           </p>
         </div>
         <div style={{display:"flex",gap:8}}>
@@ -990,25 +995,20 @@ function StaffEditor({member, onSave, onCancel}){
       </div>
 
       {/* Hours */}
-      <div style={{display:"flex",gap:12,marginBottom:16}}>
-        <div style={{flex:1}}>
-          <p style={{fontSize:11,color:B.warmGrey,marginBottom:6,fontFamily:"system-ui,-apple-system,sans-serif",
-            textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:600}}>Min hrs/week</p>
-          <input type="number" min={0} max={40} style={inputStyle}
-            value={local.minHours}
-            onChange={e=>setLocal(l=>({...l,minHours:Number(e.target.value)}))}
-            onFocus={e=>e.target.style.borderColor=B.amber}
-            onBlur={e=>e.target.style.borderColor=B.midGrey}/>
-        </div>
-        <div style={{flex:1}}>
-          <p style={{fontSize:11,color:B.warmGrey,marginBottom:6,fontFamily:"system-ui,-apple-system,sans-serif",
-            textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:600}}>Preferred hrs/week</p>
-          <input type="number" min={0} max={40} style={inputStyle}
-            value={local.preferredHours}
-            onChange={e=>setLocal(l=>({...l,preferredHours:Number(e.target.value)}))}
-            onFocus={e=>e.target.style.borderColor=B.amber}
-            onBlur={e=>e.target.style.borderColor=B.midGrey}/>
-        </div>
+      <div style={{marginBottom:16}}>
+        <p style={{fontSize:11,color:B.warmGrey,marginBottom:6,fontFamily:"system-ui,-apple-system,sans-serif",
+          textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:600}}>
+          How many hours a week are you looking for?
+        </p>
+        <input type="number" min={0} max={40} style={inputStyle}
+          value={local.preferredHours}
+          onChange={e=>setLocal(l=>({...l,preferredHours:Number(e.target.value)}))}
+          onFocus={e=>e.target.style.borderColor=B.amber}
+          onBlur={e=>e.target.style.borderColor=B.midGrey}/>
+        <p style={{fontSize:12,color:B.warmGrey,marginTop:6,
+          fontFamily:"system-ui,-apple-system,sans-serif"}}>
+          WageSave will try to get as close to this as possible each week.
+        </p>
       </div>
 
       {/* Preferred days */}
@@ -1036,10 +1036,10 @@ function StaffEditor({member, onSave, onCancel}){
         </div>
       </div>
 
-      {/* Unavailable days */}
-      <div style={{marginBottom:20}}>
+      {/* Unavailable — days of week */}
+      <div style={{marginBottom:12}}>
         <p style={{fontSize:11,color:B.warmGrey,marginBottom:8,fontFamily:"system-ui,-apple-system,sans-serif",
-          textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:600}}>Can't work</p>
+          textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:600}}>Can't work — regular days</p>
         <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
           {["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map(d=>{
             const active=(local.unavailableDays||[]).includes(d);
@@ -1059,6 +1059,47 @@ function StaffEditor({member, onSave, onCancel}){
             );
           })}
         </div>
+      </div>
+
+      {/* Unavailable — specific dates */}
+      <div style={{marginBottom:20}}>
+        <p style={{fontSize:11,color:B.warmGrey,marginBottom:8,fontFamily:"system-ui,-apple-system,sans-serif",
+          textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:600}}>Can't work — specific dates</p>
+        <div style={{display:"flex",gap:8,marginBottom:8}}>
+          <input type="date" id={`unavail-date-${local.id}`}
+            style={{flex:1,padding:"10px 12px",borderRadius:10,
+              border:`1.5px solid ${B.midGrey}`,fontSize:14,
+              fontFamily:"system-ui,-apple-system,sans-serif",
+              color:B.nearBlack,background:B.white,outline:"none"}}
+            onFocus={e=>e.target.style.borderColor=B.amber}
+            onBlur={e=>e.target.style.borderColor=B.midGrey}/>
+          <button onClick={()=>{
+            const inp=document.getElementById(`unavail-date-${local.id}`);
+            if(!inp?.value) return;
+            const dates=local.unavailableDates||[];
+            if(!dates.includes(inp.value)){
+              setLocal(l=>({...l,unavailableDates:[...(l.unavailableDates||[]),inp.value]}));
+            }
+            inp.value="";
+          }} style={{
+            padding:"10px 16px",borderRadius:10,background:B.amber,
+            border:"none",color:B.white,fontSize:14,fontWeight:600,
+            cursor:"pointer",fontFamily:"system-ui,-apple-system,sans-serif",
+          }}>Add</button>
+        </div>
+        {(local.unavailableDates||[]).length>0&&(
+          <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+            {(local.unavailableDates||[]).map(d=>(
+              <div key={d} style={{display:"flex",alignItems:"center",gap:4,
+                background:"#FDECEA",borderRadius:8,padding:"5px 10px"}}>
+                <span style={{fontSize:12,color:"#C0392B",fontFamily:"system-ui,-apple-system,sans-serif",fontWeight:600}}>{d}</span>
+                <button onClick={()=>setLocal(l=>({...l,
+                  unavailableDates:(l.unavailableDates||[]).filter(x=>x!==d)
+                }))} style={{fontSize:14,color:"#C0392B",background:"none",border:"none",cursor:"pointer",lineHeight:1}}>×</button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <div style={{display:"flex",gap:10}}>
@@ -1137,19 +1178,64 @@ function StaffManager({staff, onStaffChange}){
   );
 }
 
+// ─── LOCAL EVENTS LIST ───────────────────────────────────────────────────────
+function LocalEventsList({events, onChange}){
+  const[editing,setEditing]=useState(null);
+
+  function saveEdit(updated){
+    onChange(events.map(e=>e.id===updated.id?updated:e));
+    setEditing(null);
+  }
+
+  function deleteEvent(id){
+    onChange(events.filter(e=>e.id!==id));
+  }
+
+  return(
+    <div>
+      {events.map(ev=>(
+        editing===ev.id?(
+          <EventForm key={ev.id}
+            initial={{...ev,date:ev.dates?.[0]||""}}
+            onSave={updated=>{saveEdit(updated);}}
+            onCancel={()=>setEditing(null)}/>
+        ):(
+          <div key={ev.id} style={{background:B.amberPale,borderRadius:12,padding:14,marginBottom:10,border:`1px solid ${B.lightGrey}`}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <span style={{fontSize:18}}>{ev.icon}</span>
+                <p style={{fontSize:14,fontWeight:600,color:B.nearBlack,fontFamily:"system-ui,-apple-system,sans-serif"}}>{ev.name}</p>
+              </div>
+              <div style={{display:"flex",gap:8}}>
+                <button onClick={()=>setEditing(ev.id)} style={{fontSize:13,color:B.amber,
+                  background:"none",border:`1px solid ${B.amber}`,borderRadius:8,
+                  padding:"3px 10px",cursor:"pointer",
+                  fontFamily:"system-ui,-apple-system,sans-serif",fontWeight:600}}>Edit</button>
+                <button onClick={()=>deleteEvent(ev.id)} style={{fontSize:16,color:B.warmGrey,
+                  background:"none",border:"none",cursor:"pointer",padding:"0 4px"}}>×</button>
+              </div>
+            </div>
+            <p style={{fontSize:12,color:B.warmGrey,fontFamily:"system-ui,-apple-system,sans-serif"}}>
+              {ev.dates?.join(", ")} · {ev.impact} · {ev.recurrence}
+            </p>
+          </div>
+        )
+      ))}
+      <AddEventForm onAdd={ev=>onChange([...events,ev])}/>
+    </div>
+  );
+}
+
 // ─── ADD EVENT FORM ──────────────────────────────────────────────────────────
-function AddEventForm({onAdd}){
-  const[open,setOpen]=useState(false);
-  const[form,setForm]=useState({
-    name:"",icon:"🎸",
-    date:"",impact:"+20%",
-    recurrence:"one-off",
+function EventForm({initial=null, onSave, onCancel}){
+  const[form,setForm]=useState(initial||{
+    name:"",icon:"🎸",date:"",impact:"+20%",recurrence:"one-off",
   });
 
   function submit(){
     if(!form.name||!form.date) return;
-    onAdd({
-      id:`custom-${Date.now()}`,
+    onSave({
+      id:initial?.id||`custom-${Date.now()}`,
       name:form.name,
       icon:form.icon,
       dates:[form.date],
@@ -1157,8 +1243,6 @@ function AddEventForm({onAdd}){
       mult:impactToMult(form.impact),
       recurrence:form.recurrence,
     });
-    setForm({name:"",icon:"🎸",date:"",impact:"+20%",recurrence:"one-off"});
-    setOpen(false);
   }
 
   const inputStyle={width:"100%",padding:"11px 14px",borderRadius:10,
@@ -1167,19 +1251,10 @@ function AddEventForm({onAdd}){
     color:B.nearBlack,background:B.white,outline:"none",
     boxSizing:"border-box"};
 
-  if(!open) return(
-    <button onClick={()=>setOpen(true)} style={{
-      width:"100%",padding:"12px 0",borderRadius:12,
-      border:`1.5px dashed ${B.amber}`,background:"transparent",
-      color:B.amberDark,fontSize:14,fontWeight:600,
-      cursor:"pointer",fontFamily:"system-ui,-apple-system,sans-serif",
-    }}>+ Add local event</button>
-  );
-
   return(
-    <div style={{background:B.white,borderRadius:14,padding:16,border:`1.5px solid ${B.amber}`}}>
+    <div style={{background:B.white,borderRadius:14,padding:16,border:`1.5px solid ${B.amber}`,marginBottom:10}}>
       <p style={{fontSize:14,fontWeight:600,color:B.nearBlack,marginBottom:14,
-        fontFamily:"system-ui,-apple-system,sans-serif"}}>New local event</p>
+        fontFamily:"system-ui,-apple-system,sans-serif"}}>{initial?"Edit event":"New local event"}</p>
 
       {/* Icon picker */}
       <div style={{marginBottom:12}}>
@@ -1257,8 +1332,8 @@ function AddEventForm({onAdd}){
           color:B.white,border:"none",fontSize:14,fontWeight:700,
           cursor:form.name&&form.date?"pointer":"not-allowed",
           fontFamily:"system-ui,-apple-system,sans-serif",
-        }}>Add event</button>
-        <button onClick={()=>setOpen(false)} style={{
+        }}>{initial?"Save changes":"Add event"}</button>
+        <button onClick={onCancel} style={{
           flex:1,padding:"12px 0",borderRadius:12,
           background:"transparent",border:`1.5px solid ${B.midGrey}`,
           color:B.warmGrey,fontSize:14,fontWeight:600,cursor:"pointer",
@@ -1267,6 +1342,19 @@ function AddEventForm({onAdd}){
       </div>
     </div>
   );
+}
+
+function AddEventForm({onAdd}){
+  const[open,setOpen]=useState(false);
+  if(!open) return(
+    <button onClick={()=>setOpen(true)} style={{
+      width:"100%",padding:"12px 0",borderRadius:12,
+      border:`1.5px dashed ${B.amber}`,background:"transparent",
+      color:B.amberDark,fontSize:14,fontWeight:600,
+      cursor:"pointer",fontFamily:"system-ui,-apple-system,sans-serif",
+    }}>+ Add local event</button>
+  );
+  return <EventForm onSave={ev=>{onAdd(ev);setOpen(false);}} onCancel={()=>setOpen(false)}/>;
 }
 
 // ─── VENUE SETTINGS ──────────────────────────────────────────────────────────
@@ -1437,22 +1525,10 @@ function VenueSettings({venue, baseRevenue, dayRevenue, localEvents, staff, onSt
           Add nearby events that affect your trade — gigs at the local pub, markets, sporting events.
         </p>
 
-        {localEvents.map((ev,i)=>(
-          <div key={ev.id} style={{background:B.amberPale,borderRadius:12,padding:14,marginBottom:10,border:`1px solid ${B.lightGrey}`}}>
-            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
-              <div style={{display:"flex",alignItems:"center",gap:8}}>
-                <span style={{fontSize:18}}>{ev.icon}</span>
-                <p style={{fontSize:14,fontWeight:600,color:B.nearBlack,fontFamily:"system-ui,-apple-system,sans-serif"}}>{ev.name}</p>
-              </div>
-              <button onClick={()=>onLocalEventsChange(prev=>prev.filter((_,j)=>j!==i))} style={{fontSize:16,color:B.warmGrey,background:"none",border:"none",cursor:"pointer",padding:"0 4px"}}>×</button>
-            </div>
-            <p style={{fontSize:12,color:B.warmGrey,fontFamily:"system-ui,-apple-system,sans-serif"}}>
-              {ev.dates?.join(", ")} · {ev.impact} · {ev.recurrence}
-            </p>
-          </div>
-        ))}
-
-        <AddEventForm onAdd={ev=>{onLocalEventsChange(prev=>[...prev,ev]);setSaved(false);}}/>
+        <LocalEventsList
+          events={localEvents}
+          onChange={v=>{onLocalEventsChange(v);setSaved(false);}}
+        />
       </div>
 
       {/* Reset */}
