@@ -886,6 +886,13 @@ function DayDrawer({dayData,onActualChange,actual,feedback,onFeedback,onClose,ve
 
 // ─── STAFF PROFILES ──────────────────────────────────────────────────────────
 const ROLES = ["Kitchen","Coffee","Floor","Bar"];
+const SHIFT_PREFS = [
+  {key:"opener",   label:"Opener",   icon:"🌅", desc:"Prefers early starts (8am–2pm)"},
+  {key:"mid",      label:"Mid",      icon:"☀️", desc:"Flexible, lunch through afternoon"},
+  {key:"closer",   label:"Closer",   icon:"🌙", desc:"Prefers late shifts (midday onwards)"},
+  {key:"flexible", label:"Flexible", icon:"🔄", desc:"No preference"},
+];
+
 const ABILITY_LEVELS = [
   {key:0, label:"—",       short:"—",  color:B.midGrey},
   {key:1, label:"Learning", short:"⭐",  color:"#E65100"},
@@ -899,6 +906,7 @@ function newStaffMember(name=""){
     name,
     roles: { Kitchen:0, Coffee:0, Floor:0, Bar:0 },
     preferredHours: 20,
+    shiftPreference: "flexible",
     preferredDays: [],
     unavailableDays: [],
     unavailableDates: [],
@@ -941,8 +949,10 @@ function StaffCard({member, onEdit, onDelete}){
           </p>
           <p style={{fontSize:12,color:B.warmGrey,
             fontFamily:"system-ui,-apple-system,sans-serif"}}>
-            {member.preferredHours}h/week preferred
-            {(member.preferredDays||[]).length>0?` · Prefers ${member.preferredDays.join(", ")}` :""}
+            {member.preferredHours}h/week
+            {" · "}{SHIFT_PREFS.find(s=>s.key===(member.shiftPreference||"flexible"))?.icon}
+            {" "}{SHIFT_PREFS.find(s=>s.key===(member.shiftPreference||"flexible"))?.label}
+            {(member.preferredDays||[]).length>0?` · ${member.preferredDays.join(", ")}` :""}
           </p>
         </div>
         <div style={{display:"flex",gap:8}}>
@@ -1015,6 +1025,37 @@ function StaffEditor({member, onSave, onCancel}){
           fontFamily:"system-ui,-apple-system,sans-serif"}}>
           WageSave will try to get as close to this as possible each week.
         </p>
+      </div>
+
+      {/* Shift preference */}
+      <div style={{marginBottom:16}}>
+        <p style={{fontSize:11,color:B.warmGrey,marginBottom:8,fontFamily:"system-ui,-apple-system,sans-serif",
+          textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:600}}>Shift preference</p>
+        <div style={{display:"flex",flexDirection:"column",gap:8}}>
+          {SHIFT_PREFS.map(pref=>{
+            const active=(local.shiftPreference||"flexible")===pref.key;
+            return(
+              <button key={pref.key} onClick={()=>setLocal(l=>({...l,shiftPreference:pref.key}))}
+                style={{
+                  display:"flex",alignItems:"center",gap:12,padding:"11px 14px",
+                  borderRadius:12,border:`1.5px solid ${active?B.amber:B.midGrey}`,
+                  background:active?B.amberLight:B.white,cursor:"pointer",
+                  textAlign:"left",transition:"all 0.15s",
+                  boxShadow:active?`0 2px 8px rgba(232,160,32,0.2)`:"none",
+                }}>
+                <span style={{fontSize:18}}>{pref.icon}</span>
+                <div>
+                  <p style={{fontSize:14,fontWeight:600,
+                    color:active?B.amberDark:B.nearBlack,
+                    fontFamily:"system-ui,-apple-system,sans-serif"}}>{pref.label}</p>
+                  <p style={{fontSize:12,color:B.warmGrey,
+                    fontFamily:"system-ui,-apple-system,sans-serif"}}>{pref.desc}</p>
+                </div>
+                {active&&<span style={{marginLeft:"auto",color:B.amber,fontSize:16}}>✓</span>}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {/* Preferred days */}
@@ -1543,6 +1584,391 @@ function VenueSettings({venue, baseRevenue, dayRevenue, localEvents, staff, onSt
   );
 }
 
+// ─── ROSTER GENERATOR ────────────────────────────────────────────────────────
+
+function isStaffAvailable(member, day, date) {
+  if ((member.unavailableDays||[]).includes(day)) return false;
+  const dk = dateKey(date);
+  if ((member.unavailableDates||[]).includes(dk)) return false;
+  return true;
+}
+
+function shiftMatchesPref(shift, pref) {
+  if (pref === "flexible") return true;
+  if (pref === "opener")  return shift.start <= 10;
+  if (pref === "closer")  return shift.start >= 12;
+  if (pref === "mid")     return shift.start >= 9 && shift.start <= 14;
+  return true;
+}
+
+function generateRoster(weekData, staff, tradingHours) {
+  // Track hours allocated per staff member this week
+  const hoursAllocated = {};
+  staff.forEach(s => hoursAllocated[s.id] = 0);
+
+  const roster = {}; // { day: [ { shift, staffId, staffName, role, start, end } ] }
+
+  DAYS.forEach(day => {
+    const dayData = weekData.find(d => d.day === day);
+    if (!dayData || dayData.closed || !dayData.shifts?.length) {
+      roster[day] = [];
+      return;
+    }
+
+    const date = dayData.date;
+    const dayRoster = [];
+
+    dayData.shifts.forEach(shift => {
+      const shiftHours = shift.end - shift.start;
+      const role = shift.role;
+
+      // Find best available staff for this shift
+      const candidates = staff.filter(member => {
+        if (!isStaffAvailable(member, day, date)) return false;
+        const abilityLevel = member.roles?.[role] || 0;
+        if (abilityLevel === 0) return false; // Can't do this role
+        return true;
+      });
+
+      if (candidates.length === 0) {
+        // No one available — flag it
+        dayRoster.push({
+          ...shift,
+          staffId: null,
+          staffName: "⚠️ Unassigned",
+          abilityLevel: 0,
+          warning: `No ${role} staff available`,
+        });
+        return;
+      }
+
+      // Score candidates
+      const scored = candidates.map(member => {
+        const abilityLevel = member.roles[role] || 0;
+        const prefMatch = shiftMatchesPref(shift, member.shiftPreference || "flexible") ? 10 : 0;
+        const dayPref = (member.preferredDays||[]).includes(day) ? 5 : 0;
+        const hoursNeeded = Math.max(0, (member.preferredHours||0)/5 - hoursAllocated[member.id]);
+        const hoursScore = hoursNeeded > 0 ? 5 : -2;
+        // Prefer Strong (3) on big days, allow Learning (1) on quiet days
+        const abilityScore = abilityLevel * 3;
+        // Don't assign same person to two shifts same day
+        const alreadyToday = dayRoster.some(r => r.staffId === member.id);
+        if (alreadyToday) return { member, score: -999 };
+
+        return { member, score: abilityScore + prefMatch + dayPref + hoursScore, abilityLevel };
+      }).sort((a, b) => b.score - a.score);
+
+      const best = scored[0];
+      if (best && best.score > -999) {
+        hoursAllocated[best.member.id] = (hoursAllocated[best.member.id] || 0) + shiftHours;
+        dayRoster.push({
+          ...shift,
+          staffId: best.member.id,
+          staffName: best.member.name,
+          abilityLevel: best.abilityLevel,
+        });
+      } else {
+        dayRoster.push({
+          ...shift,
+          staffId: null,
+          staffName: "⚠️ Unassigned",
+          abilityLevel: 0,
+          warning: `No ${role} staff available`,
+        });
+      }
+    });
+
+    // Check experience coverage — warn if no Strong staff on busy days
+    const strongCount = dayRoster.filter(r => r.abilityLevel >= 3).length;
+    const isbusy = (dayData.adj || 0) > 2500;
+    if (isbusy && strongCount === 0 && dayRoster.length > 0) {
+      dayRoster._warning = "No ⭐⭐⭐ staff rostered on a busy day";
+    }
+
+    roster[day] = dayRoster;
+  });
+
+  // Summary — hours per staff member
+  const hoursSummary = staff.map(s => ({
+    id: s.id,
+    name: s.name,
+    allocated: Math.round(hoursAllocated[s.id] * 10) / 10,
+    preferred: s.preferredHours || 0,
+    diff: Math.round((hoursAllocated[s.id] - (s.preferredHours||0)/5 * 5) * 10) / 10,
+  }));
+
+  return { roster, hoursSummary, hoursAllocated };
+}
+
+// ─── ROSTER VIEW ─────────────────────────────────────────────────────────────
+function RosterView({weekData, staff, onClose, venueName, weekLabel}){
+  const { roster, hoursSummary } = generateRoster(weekData, staff);
+  const [editingShift, setEditingShift] = useState(null); // {day, shiftIndex}
+  const [localRoster, setLocalRoster] = useState(roster);
+
+  function reassign(day, shiftIndex, newStaffId) {
+    const member = staff.find(s => s.id === newStaffId);
+    setLocalRoster(prev => ({
+      ...prev,
+      [day]: prev[day].map((s, i) => i === shiftIndex
+        ? { ...s, staffId: newStaffId, staffName: member?.name || "Unassigned" }
+        : s
+      )
+    }));
+    setEditingShift(null);
+  }
+
+  function copyToClipboard() {
+    const lines = [`${venueName} — Roster ${weekLabel}`, ""];
+    DAYS.forEach(day => {
+      const shifts = localRoster[day];
+      if (!shifts?.length) return;
+      lines.push(`${day}:`);
+      shifts.forEach(s => {
+        const start = `${s.start%12||12}${s.start<12?"am":"pm"}`;
+        const end = `${s.end%12||12}${s.end<12?"am":"pm"}`;
+        lines.push(`  ${s.staffName} — ${s.label||s.role} ${start}→${end}`);
+      });
+      lines.push("");
+    });
+    navigator.clipboard?.writeText(lines.join("
+")).catch(()=>{});
+    alert("Roster copied to clipboard — paste into WhatsApp or Messages");
+  }
+
+  const ABILITY_COLORS = {
+    0: B.midGrey,
+    1: "#E65100",
+    2: B.amberDark,
+    3: B.success,
+  };
+
+  return(
+    <div style={{position:"fixed",inset:0,background:B.amberPale,zIndex:400,overflowY:"auto"}}>
+      <style>{`*{box-sizing:border-box;}@keyframes fadeUp{from{opacity:0;transform:translateY(10px);}to{opacity:1;transform:translateY(0);}}.shift-row{animation:fadeUp 0.3s ease forwards;}`}</style>
+
+      {/* Header */}
+      <div style={{background:B.white,borderBottom:`1px solid ${B.lightGrey}`,
+        padding:"14px 20px",position:"sticky",top:0,zIndex:100,
+        boxShadow:"0 1px 8px rgba(28,21,16,0.06)"}}>
+        <div style={{maxWidth:480,margin:"0 auto",display:"flex",
+          justifyContent:"space-between",alignItems:"center"}}>
+          <div>
+            <p style={{fontSize:13,fontWeight:700,color:B.amber,
+              letterSpacing:"0.08em",textTransform:"uppercase",
+              fontFamily:"system-ui,-apple-system,sans-serif"}}>Roster</p>
+            <p style={{fontSize:12,color:B.warmGrey,
+              fontFamily:"system-ui,-apple-system,sans-serif"}}>
+              {venueName} · {weekLabel}
+            </p>
+          </div>
+          <div style={{display:"flex",gap:10}}>
+            <button onClick={copyToClipboard} style={{
+              padding:"8px 14px",borderRadius:10,background:B.amber,
+              border:"none",color:B.white,fontSize:13,fontWeight:700,
+              cursor:"pointer",fontFamily:"system-ui,-apple-system,sans-serif",
+            }}>📋 Copy</button>
+            <button onClick={()=>{
+              const lines=[`${venueName} — Roster ${weekLabel}`,""];
+              DAYS.forEach(day=>{
+                const shifts=localRoster[day];
+                if(!shifts?.length) return;
+                const dayData=weekData.find(d=>d.day===day);
+                if(!dayData||dayData.closed) return;
+                lines.push(`${day} ${dayData.date.toLocaleDateString("en-AU",{day:"numeric",month:"short"})}:`);
+                shifts.forEach(s=>{
+                  const start=`${s.start%12||12}${s.start<12?"am":"pm"}`;
+                  const end=`${s.end%12||12}${s.end<12?"am":"pm"}`;
+                  lines.push(`  ${s.staffName} — ${s.label||s.role} ${start}→${end}`);
+                });
+                lines.push("");
+              });
+              const subject=encodeURIComponent(`${venueName} Roster — ${weekLabel}`);
+              const body=encodeURIComponent(lines.join("
+"));
+              window.location.href=`mailto:?subject=${subject}&body=${body}`;
+            }} style={{
+              padding:"8px 14px",borderRadius:10,background:B.white,
+              border:`1.5px solid ${B.midGrey}`,color:B.nearBlack,
+              fontSize:13,fontWeight:700,cursor:"pointer",
+              fontFamily:"system-ui,-apple-system,sans-serif",
+            }}>✉️ Email</button>
+            <button onClick={onClose} style={{
+              padding:"8px 16px",borderRadius:10,background:"transparent",
+              border:`1.5px solid ${B.midGrey}`,color:B.warmGrey,
+              fontSize:13,fontWeight:600,cursor:"pointer",
+              fontFamily:"system-ui,-apple-system,sans-serif",
+            }}>Close</button>
+          </div>
+        </div>
+      </div>
+
+      <div style={{maxWidth:480,margin:"0 auto",padding:"20px 18px 80px"}}>
+
+        {/* Day by day roster */}
+        {DAYS.map(day => {
+          const shifts = localRoster[day] || [];
+          const dayData = weekData.find(d => d.day === day);
+          if (!dayData || dayData.closed) return(
+            <div key={day} style={{marginBottom:12,opacity:0.4}}>
+              <p style={{fontSize:13,fontWeight:700,color:B.warmGrey,
+                fontFamily:"system-ui,-apple-system,sans-serif",
+                letterSpacing:"0.05em",textTransform:"uppercase",marginBottom:6}}>
+                {day} · Closed
+              </p>
+            </div>
+          );
+
+          return(
+            <div key={day} style={{background:B.white,borderRadius:18,padding:18,
+              marginBottom:14,boxShadow:"0 2px 8px rgba(28,21,16,0.05)",
+              border:`1px solid ${B.lightGrey}`}}>
+
+              {/* Day header */}
+              <div style={{display:"flex",justifyContent:"space-between",
+                alignItems:"center",marginBottom:12}}>
+                <p style={{fontSize:14,fontWeight:700,color:B.nearBlack,
+                  fontFamily:"system-ui,-apple-system,sans-serif",
+                  letterSpacing:"0.05em",textTransform:"uppercase"}}>
+                  {day} · {dayData.date.toLocaleDateString("en-AU",{day:"numeric",month:"short"})}
+                </p>
+                <p style={{fontSize:13,color:B.amber,fontWeight:600,
+                  fontFamily:"system-ui,-apple-system,sans-serif"}}>
+                  ${Math.round(dayData.adj).toLocaleString()}
+                </p>
+              </div>
+
+              {shifts.length === 0 ? (
+                <p style={{fontSize:13,color:B.warmGrey,
+                  fontFamily:"system-ui,-apple-system,sans-serif"}}>
+                  No shifts needed
+                </p>
+              ) : (
+                shifts.map((shift, i) => {
+                  const isEditing = editingShift?.day===day && editingShift?.index===i;
+                  const startFmt = `${shift.start%12||12}${shift.start<12?"am":"pm"}`;
+                  const endFmt = `${shift.end%12||12}${shift.end<12?"am":"pm"}`;
+                  const abilityColor = ABILITY_COLORS[shift.abilityLevel||0];
+                  const isUnassigned = !shift.staffId;
+
+                  return(
+                    <div key={i} className="shift-row" style={{
+                      marginBottom:8,borderRadius:12,overflow:"hidden",
+                      border:`1.5px solid ${isUnassigned?"#ffcdd2":B.lightGrey}`,
+                    }}>
+                      <div style={{
+                        display:"flex",alignItems:"center",justifyContent:"space-between",
+                        padding:"10px 14px",
+                        background:isUnassigned?"#fff5f5":B.amberPale,
+                      }}>
+                        <div style={{display:"flex",alignItems:"center",gap:10}}>
+                          <div style={{width:8,height:8,borderRadius:"50%",
+                            background:abilityColor,flexShrink:0}}/>
+                          <div>
+                            <p style={{fontSize:14,fontWeight:700,
+                              color:isUnassigned?B.danger:B.nearBlack,
+                              fontFamily:"system-ui,-apple-system,sans-serif"}}>
+                              {shift.staffName}
+                            </p>
+                            <p style={{fontSize:12,color:B.warmGrey,
+                              fontFamily:"system-ui,-apple-system,sans-serif"}}>
+                              {shift.label||shift.role} · {startFmt}→{endFmt}
+                            </p>
+                          </div>
+                        </div>
+                        <button onClick={()=>setEditingShift(
+                          isEditing ? null : {day, index:i}
+                        )} style={{
+                          fontSize:12,color:B.amber,background:"none",
+                          border:`1px solid ${B.amber}`,borderRadius:8,
+                          padding:"4px 10px",cursor:"pointer",fontWeight:600,
+                          fontFamily:"system-ui,-apple-system,sans-serif",
+                        }}>
+                          {isEditing?"Cancel":"Swap"}
+                        </button>
+                      </div>
+
+                      {/* Swap panel */}
+                      {isEditing&&(
+                        <div style={{padding:"10px 14px",background:B.white,
+                          borderTop:`1px solid ${B.lightGrey}`}}>
+                          <p style={{fontSize:11,color:B.warmGrey,marginBottom:8,
+                            fontFamily:"system-ui,-apple-system,sans-serif",
+                            textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:600}}>
+                            Assign to:
+                          </p>
+                          {staff.filter(s=>
+                            (s.roles?.[shift.role]||0)>0 &&
+                            isStaffAvailable(s, day, dayData.date)
+                          ).map(s=>(
+                            <button key={s.id} onClick={()=>reassign(day,i,s.id)}
+                              style={{
+                                display:"flex",alignItems:"center",gap:10,
+                                width:"100%",padding:"9px 12px",marginBottom:6,
+                                borderRadius:10,border:`1.5px solid ${shift.staffId===s.id?B.amber:B.lightGrey}`,
+                                background:shift.staffId===s.id?B.amberLight:B.white,
+                                cursor:"pointer",textAlign:"left",
+                                fontFamily:"system-ui,-apple-system,sans-serif",
+                              }}>
+                              <div style={{width:8,height:8,borderRadius:"50%",
+                                background:ABILITY_COLORS[s.roles[shift.role]||0],flexShrink:0}}/>
+                              <p style={{fontSize:14,fontWeight:600,color:B.nearBlack,flex:1}}>
+                                {s.name}
+                              </p>
+                              <p style={{fontSize:12,color:B.warmGrey}}>
+                                {ABILITY_LEVELS.find(l=>l.key===(s.roles[shift.role]||0))?.short}
+                              </p>
+                            </button>
+                          ))}
+                          {staff.filter(s=>(s.roles?.[shift.role]||0)>0&&isStaffAvailable(s,day,dayData.date)).length===0&&(
+                            <p style={{fontSize:13,color:B.warmGrey,fontFamily:"system-ui,-apple-system,sans-serif"}}>
+                              No available staff for this role
+                            </p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          );
+        })}
+
+        {/* Hours summary */}
+        <div style={{background:B.white,borderRadius:18,padding:18,marginTop:8,
+          boxShadow:"0 2px 8px rgba(28,21,16,0.05)"}}>
+          <p style={{fontSize:11,letterSpacing:"0.1em",color:B.warmGrey,
+            fontFamily:"system-ui,-apple-system,sans-serif",
+            textTransform:"uppercase",fontWeight:600,marginBottom:14}}>
+            Weekly hours
+          </p>
+          {hoursSummary.filter(s=>s.preferred>0).map(s=>(
+            <div key={s.id} style={{display:"flex",justifyContent:"space-between",
+              alignItems:"center",paddingBottom:8,marginBottom:8,
+              borderBottom:`1px solid ${B.lightGrey}`}}>
+              <p style={{fontSize:14,fontWeight:600,color:B.nearBlack,
+                fontFamily:"system-ui,-apple-system,sans-serif"}}>{s.name}</p>
+              <div style={{textAlign:"right"}}>
+                <p style={{fontSize:14,fontWeight:600,
+                  color:s.allocated>=s.preferred*0.8?B.success:B.danger,
+                  fontFamily:"system-ui,-apple-system,sans-serif"}}>
+                  {s.allocated}h
+                </p>
+                <p style={{fontSize:11,color:B.warmGrey,
+                  fontFamily:"system-ui,-apple-system,sans-serif"}}>
+                  of {s.preferred}h preferred
+                </p>
+              </div>
+            </div>
+          ))}
+        </div>
+
+      </div>
+    </div>
+  );
+}
+
 // ─── MAIN APP ────────────────────────────────────────────────────────────────
 function MainApp({venue, onReset}){
   const[weekOffset,setWeekOffset]=useState(0);
@@ -1551,6 +1977,7 @@ function MainApp({venue, onReset}){
   const[feedback,setFeedback]=useState(()=>{ try{const s=localStorage.getItem("wagesave_feedback");return s?JSON.parse(s):{}}catch{return{}}});
   const[weather,setWeather]=useState(null);
   const[showSettings,setShowSettings]=useState(false);
+  const[showRoster,setShowRoster]=useState(false);
   const[showCsvNudge,setShowCsvNudge]=useState(()=>{ try{return localStorage.getItem("wagesave_csv_dismissed")!=="true"}catch{return true}});
   const[showMonthPrompt,setShowMonthPrompt]=useState(()=>{
     try{
@@ -1631,6 +2058,12 @@ function MainApp({venue, onReset}){
           </div>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
             {weather&&<div style={{textAlign:"right"}}><p style={{fontSize:13,color:B.nearBlack,fontFamily:"system-ui,-apple-system,sans-serif"}}>{weather.label}</p><p style={{fontSize:11,color:B.warmGrey,fontFamily:"system-ui,-apple-system,sans-serif"}}>{weather.temp}°C</p></div>}
+            <button onClick={()=>setShowRoster(true)} style={{
+              padding:"7px 14px",borderRadius:10,background:B.amber,
+              border:"none",color:B.white,fontSize:13,fontWeight:700,
+              cursor:"pointer",fontFamily:"system-ui,-apple-system,sans-serif",
+              boxShadow:`0 2px 8px rgba(232,160,32,0.3)`,
+            }}>📋 Roster</button>
             <button onClick={()=>setShowSettings(!showSettings)} style={{width:36,height:36,borderRadius:"50%",border:`1.5px solid ${showSettings?B.amber:B.midGrey}`,background:showSettings?B.amberLight:B.white,color:showSettings?B.amberDark:B.warmGrey,fontSize:15,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>⚙</button>
           </div>
         </div>
@@ -1819,6 +2252,17 @@ function MainApp({venue, onReset}){
 
         <p style={{fontSize:11,color:B.midGrey,textAlign:"center",marginTop:24,fontFamily:"system-ui,-apple-system,sans-serif"}}>Tap any day for details · {venue.suburb}</p>
       </div>
+
+      {/* Roster View */}
+      {showRoster&&(
+        <RosterView
+          weekData={weekData}
+          staff={staff||[]}
+          venueName={venue.name}
+          weekLabel={weekLabel()}
+          onClose={()=>setShowRoster(false)}
+        />
+      )}
 
       {/* Drawer */}
       {selectedDay!==null&&selectedData&&(
