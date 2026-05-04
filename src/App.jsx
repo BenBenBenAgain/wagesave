@@ -1137,12 +1137,23 @@ function StaffEditor({member, onSave, onCancel}){
         {(local.unavailableDates||[]).length>0&&(
           <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
             {(local.unavailableDates||[]).map(d=>(
-              <div key={d} style={{display:"flex",alignItems:"center",gap:4,
-                background:"#FDECEA",borderRadius:8,padding:"5px 10px"}}>
-                <span style={{fontSize:12,color:"#C0392B",fontFamily:"system-ui,-apple-system,sans-serif",fontWeight:600}}>{d}</span>
+              <div key={d} style={{
+                display:"inline-flex",alignItems:"center",gap:6,
+                background:"#FDECEA",borderRadius:8,padding:"6px 12px",
+                marginBottom:6,marginRight:6,
+              }}>
+                <span style={{
+                  fontSize:12,color:"#C0392B",
+                  fontFamily:"system-ui,-apple-system,sans-serif",
+                  fontWeight:600,whiteSpace:"nowrap",
+                }}>{d}</span>
                 <button onClick={()=>setLocal(l=>({...l,
                   unavailableDates:(l.unavailableDates||[]).filter(x=>x!==d)
-                }))} style={{fontSize:14,color:"#C0392B",background:"none",border:"none",cursor:"pointer",lineHeight:1}}>×</button>
+                }))} style={{
+                  fontSize:14,color:"#C0392B",background:"none",
+                  border:"none",cursor:"pointer",lineHeight:1,
+                  flexShrink:0,padding:0,
+                }}>×</button>
               </div>
             ))}
           </div>
@@ -2052,7 +2063,7 @@ function MainApp({venue, onReset}){
         <div style={{maxWidth:480,margin:"0 auto",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <div>
             <LogoWordmark size={18}/>
-            <p style={{fontSize:11,color:B.warmGrey,marginTop:2,fontFamily:"system-ui,-apple-system,sans-serif"}}>{venue.name} · {venue.suburb}</p>
+            <p style={{fontSize:11,color:B.warmGrey,marginTop:2,fontFamily:"system-ui,-apple-system,sans-serif"}}>{venue.name}{venue.suburb?` · ${venue.suburb}`:""}</p>
           </div>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
             {weather&&<div style={{textAlign:"right"}}><p style={{fontSize:13,color:B.nearBlack,fontFamily:"system-ui,-apple-system,sans-serif"}}>{weather.label}</p><p style={{fontSize:11,color:B.warmGrey,fontFamily:"system-ui,-apple-system,sans-serif"}}>{weather.temp}°C</p></div>}
@@ -2248,7 +2259,7 @@ function MainApp({venue, onReset}){
           })}
         </div>
 
-        <p style={{fontSize:11,color:B.midGrey,textAlign:"center",marginTop:24,fontFamily:"system-ui,-apple-system,sans-serif"}}>Tap any day for details · {venue.suburb}</p>
+        <p style={{fontSize:11,color:B.midGrey,textAlign:"center",marginTop:24,fontFamily:"system-ui,-apple-system,sans-serif"}}>Tap any day for details{venue.suburb?` · ${venue.suburb}`:""}</p>
       </div>
 
       {/* Roster View */}
