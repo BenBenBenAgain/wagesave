@@ -1731,8 +1731,7 @@ function RosterView({weekData, staff, onClose, venueName, weekLabel}){
       });
       lines.push("");
     });
-    navigator.clipboard?.writeText(lines.join("
-")).catch(()=>{});
+    navigator.clipboard?.writeText(lines.join("\n")).catch(()=>{});
     alert("Roster copied to clipboard — paste into WhatsApp or Messages");
   }
 
@@ -1784,8 +1783,7 @@ function RosterView({weekData, staff, onClose, venueName, weekLabel}){
                 lines.push("");
               });
               const subject=encodeURIComponent(`${venueName} Roster — ${weekLabel}`);
-              const body=encodeURIComponent(lines.join("
-"));
+              const body=encodeURIComponent(lines.join("\n"));
               window.location.href=`mailto:?subject=${subject}&body=${body}`;
             }} style={{
               padding:"8px 14px",borderRadius:10,background:B.white,
