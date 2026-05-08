@@ -287,12 +287,20 @@ function calcDay(day, baseRev, hasKitchen, servesAlcohol, tradingHours, seasonal
   const h = tradingHours[day];
   if (!h || !h.open) return {adj:0,laborBudget:0,byHour:new Array(24).fill(0),roles:{roles:[],total:0,note:"Closed today"},shifts:[],closed:true};
 
-  // Seasonal multiplier
-  const month = date ? date.getMonth() : new Date().getMonth();
-  const seasonMults = seasonality==="summer"?SEASON_MULT_SUMMER:seasonality==="winter"?SEASON_MULT_WINTER:SEASON_MULT_FLAT;
-  const seasonMult = seasonMults[month];
-
-  const adj = baseRev * DAY_MULT[day] * weatherMult * eventMult * weekVar * seasonMult;
+  // Use per-day revenue midpoint if set, otherwise fall back to baseRev * day multipliers
+  const dr = dayRevenue && dayRevenue[day];
+  let dayBase;
+  if (dr && (dr.low || dr.high)) {
+    // Per-day range set — use midpoint, only adjust for weather/events on top
+    dayBase = Math.round((dr.low + dr.high) / 2);
+    var adj = dayBase * weatherMult * eventMult;
+  } else {
+    // No per-day range — use full calculation with seasonal and day multipliers
+    const month = date ? date.getMonth() : new Date().getMonth();
+    const seasonMults = seasonality==="summer"?SEASON_MULT_SUMMER:seasonality==="winter"?SEASON_MULT_WINTER:SEASON_MULT_FLAT;
+    const seasonMult = seasonMults[month];
+    var adj = baseRev * DAY_MULT[day] * weatherMult * eventMult * weekVar * seasonMult;
+  }
   const laborBudget = adj * 0.30;
   const totalHours = laborBudget / 29;
 
