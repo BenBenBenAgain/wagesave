@@ -1936,11 +1936,19 @@ function RosterView({weekData, staff, onClose, venueName, weekLabel, weekOffset,
               {/* Day header */}
               <div style={{display:"flex",justifyContent:"space-between",
                 alignItems:"center",marginBottom:12}}>
-                <p style={{fontSize:14,fontWeight:700,color:B.nearBlack,
-                  fontFamily:"system-ui,-apple-system,sans-serif",
-                  letterSpacing:"0.05em",textTransform:"uppercase"}}>
-                  {day} · {dayData.date.toLocaleDateString("en-AU",{day:"numeric",month:"short"})}
-                </p>
+                <div>
+                  <p style={{fontSize:14,fontWeight:700,color:B.nearBlack,
+                    fontFamily:"system-ui,-apple-system,sans-serif",
+                    letterSpacing:"0.05em",textTransform:"uppercase"}}>
+                    {day} · {dayData.date.toLocaleDateString("en-AU",{day:"numeric",month:"short"})}
+                  </p>
+                  {dayData.weatherLabel&&(
+                    <p style={{fontSize:12,color:B.warmGrey,marginTop:1,
+                      fontFamily:"system-ui,-apple-system,sans-serif"}}>
+                      {dayData.weatherLabel} · {dayData.weatherTemp}°C
+                    </p>
+                  )}
+                </div>
                 <p style={{fontSize:13,color:B.amber,fontWeight:600,
                   fontFamily:"system-ui,-apple-system,sans-serif"}}>
                   ${Math.round(dayData.adj).toLocaleString()}
@@ -2170,31 +2178,41 @@ function MainApp({venue, onReset}){
   useEffect(()=>{
     if(!navigator.geolocation) return;
     navigator.geolocation.getCurrentPosition(pos=>{
+      const lat = pos.coords.latitude;
+      const lon = pos.coords.longitude;
       const API_KEY = "8c9686f901d9e2180d4328a24d2da88f";
+
       // Current weather for header display
-      fetch(`https://api.openweathermap.org/data/2.5/weather?lat=${pos.coords.latitude}&lon=${pos.coords.longitude}&appid=${API_KEY}&units=metric`)
+      fetch(`https://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lon}&appid=${API_KEY}&units=metric`)
         .then(r=>r.json()).then(d=>{
           if(d.cod!==200) return;
           const temp=Math.round(d.main.temp);
           setWeather({...weatherFromCode(d.weather[0].id,temp),temp,city:d.name});
         }).catch(()=>{});
-      // 5-day forecast — one entry per 3 hours, we pick midday for each day
-      fetch(`https://api.openweathermap.org/data/2.5/forecast?lat=${pos.coords.latitude}&lon=${pos.coords.longitude}&appid=${API_KEY}&units=metric`)
+
+      // Open-Meteo 16-day forecast — free, no API key needed
+      // weathercode: 0=clear, 1-3=cloudy, 51-67=rain, 71-77=snow, 80-82=showers
+      fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&daily=weathercode,temperature_2m_max,precipitation_sum&timezone=Australia/Melbourne&forecast_days=16`)
         .then(r=>r.json()).then(d=>{
-          if(!d.list) return;
+          if(!d.daily) return;
           const byDay = {};
-          d.list.forEach(entry=>{
-            const dt = new Date(entry.dt * 1000);
-            const dk = dateKey(dt);
-            const hour = dt.getHours();
-            // Prefer midday reading (11am-1pm) for each day
-            if(!byDay[dk] || Math.abs(hour-12) < Math.abs(byDay[dk].hour-12)){
-              byDay[dk] = {
-                hour,
-                ...weatherFromCode(entry.weather[0].id, Math.round(entry.main.temp)),
-                temp: Math.round(entry.main.temp),
-              };
-            }
+          d.daily.time.forEach((dateStr, i) => {
+            const code = d.daily.weathercode[i];
+            const temp = Math.round(d.daily.temperature_2m_max[i]);
+            const precip = d.daily.precipitation_sum[i] || 0;
+            // Convert Open-Meteo weather code to our format
+            let mult = 1.0, label = "🌥 Cloudy", short = "Cloudy";
+            if(code === 0) {
+              if(temp >= 24){ mult=1.35; label="🏖 Beach day"; short=`${temp}°`; }
+              else if(temp >= 20){ mult=1.20; label="☀️ Sunny"; short=`${temp}°`; }
+              else { mult=1.10; label="☀️ Clear"; short=`${temp}°`; }
+            } else if(code <= 3){ mult=1.0; label="🌥 Cloudy"; short=`${temp}°`; }
+            else if(code <= 48){ mult=0.90; label="🌫 Overcast"; short=`${temp}°`; }
+            else if(code <= 67){ mult=precip>5?0.80:0.85; label="🌧 Rain"; short=`${temp}°`; }
+            else if(code <= 77){ mult=0.80; label="🌨 Snow"; short=`${temp}°`; }
+            else if(code <= 82){ mult=0.85; label="🌦 Showers"; short=`${temp}°`; }
+            else { mult=0.80; label="⛈ Storm"; short=`${temp}°`; }
+            byDay[dateStr] = { mult, label, short, temp, code };
           });
           setForecast(byDay);
         }).catch(()=>{});
@@ -2434,7 +2452,10 @@ function MainApp({venue, onReset}){
                     <p style={{fontSize:11,color:B.warmGrey,marginTop:2,marginBottom:2,fontFamily:"system-ui,-apple-system,sans-serif"}}>peak at once</p>
                     <p style={{fontSize:11,color:B.midGrey,marginBottom:6,fontFamily:"system-ui,-apple-system,sans-serif"}}>{dayData.totalShifts||roles.total} shifts across the day</p>
                     <p style={{fontSize:11,color:B.warmGrey,marginBottom:6,lineHeight:1.5,fontFamily:"system-ui,-apple-system,sans-serif"}}>{roles.roles.map(r=>`${r.count}× ${r.role}`).join(" · ")}</p>
-                    <p style={{fontSize:13,color:B.warmGrey,fontWeight:500,fontFamily:"system-ui,-apple-system,sans-serif"}}>${adj>=1000?`${(adj/1000).toFixed(1)}k`:Math.round(adj)}</p>
+                    <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
+                      <p style={{fontSize:13,color:B.warmGrey,fontWeight:500,fontFamily:"system-ui,-apple-system,sans-serif"}}>${adj>=1000?`${(adj/1000).toFixed(1)}k`:Math.round(adj)}</p>
+                      {dayData.weatherLabel&&<p style={{fontSize:11,color:B.warmGrey,fontFamily:"system-ui,-apple-system,sans-serif"}}>{dayData.weatherLabel.split(" ")[0]} {dayData.weatherTemp}°</p>}
+                    </div>
 
                     {flags.length>0&&<div style={{display:"flex",gap:3,marginTop:8,flexWrap:"wrap"}}>{flags.map((f,i)=><span key={i} title={`${f.label} ${f.impact}`} style={{fontSize:14}}>{f.icon}</span>)}</div>}
 
