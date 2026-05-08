@@ -289,18 +289,15 @@ function calcDay(day, baseRev, hasKitchen, servesAlcohol, tradingHours, seasonal
 
   // Use per-day revenue midpoint if set, otherwise fall back to baseRev * day multipliers
   const dr = dayRevenue && dayRevenue[day];
-  let dayBase;
-  if (dr && (dr.low || dr.high)) {
-    // Per-day range set — use midpoint, only adjust for weather/events on top
-    dayBase = Math.round((dr.low + dr.high) / 2);
-    var adj = dayBase * weatherMult * eventMult;
-  } else {
-    // No per-day range — use full calculation with seasonal and day multipliers
-    const month = date ? date.getMonth() : new Date().getMonth();
-    const seasonMults = seasonality==="summer"?SEASON_MULT_SUMMER:seasonality==="winter"?SEASON_MULT_WINTER:SEASON_MULT_FLAT;
-    const seasonMult = seasonMults[month];
-    var adj = baseRev * DAY_MULT[day] * weatherMult * eventMult * weekVar * seasonMult;
-  }
+  const month = date ? date.getMonth() : new Date().getMonth();
+  const seasonMults = seasonality==="summer"?SEASON_MULT_SUMMER:seasonality==="winter"?SEASON_MULT_WINTER:SEASON_MULT_FLAT;
+  const seasonMult = seasonMults[month];
+  const dayBase = (dr && (dr.low || dr.high))
+    ? Math.round((dr.low + dr.high) / 2)
+    : baseRev * DAY_MULT[day] * weekVar * seasonMult;
+  const adj = (dr && (dr.low || dr.high))
+    ? dayBase * weatherMult * eventMult
+    : dayBase * weatherMult * eventMult;
   const laborBudget = adj * 0.30;
   const totalHours = laborBudget / 29;
 
