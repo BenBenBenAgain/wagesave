@@ -1618,6 +1618,17 @@ function shiftMatchesPref(shift, pref) {
 }
 
 function generateRoster(weekData, staff, tradingHours) {
+  // Rotation seed based on week — changes each week so different staff get priority
+  const weekSeed = weekData[0] ? dateKey(weekData[0].date) : "0";
+  const seedNum = weekSeed.split("-").reduce((a,b)=>a+parseInt(b),0);
+
+  // Shuffle staff order slightly based on week seed for rotation
+  const shuffledStaff = [...staff].sort((a,b)=>{
+    const aHash = (a.name.charCodeAt(0)||0) + seedNum;
+    const bHash = (b.name.charCodeAt(0)||0) + seedNum;
+    return (aHash % 7) - (bHash % 7);
+  });
+
   // Track hours allocated per staff member this week
   const hoursAllocated = {};
   staff.forEach(s => hoursAllocated[s.id] = 0);
@@ -1651,7 +1662,7 @@ function generateRoster(weekData, staff, tradingHours) {
         return member.roles?.[r] || 0;
       }
 
-      const candidates = staff.filter(member => {
+      const candidates = shuffledStaff.filter(member => {
         if (!isStaffAvailable(member, day, date)) return false;
         const abilityLevel = getEffectiveAbility(member, role);
         if (abilityLevel === 0) return false;
@@ -1680,6 +1691,7 @@ function generateRoster(weekData, staff, tradingHours) {
       }
 
       // Score candidates
+      // Add small weekly rotation bonus to break ties differently each week
       const scored = candidates.map(member => {
         const abilityLevel = getEffectiveAbility(member, role);
         const prefMatch = shiftMatchesPref(shift, member.shiftPreference || "flexible") ? 10 : 0;
@@ -1692,7 +1704,9 @@ function generateRoster(weekData, staff, tradingHours) {
         const hoursScore = hoursNeeded > 2 ? 8 : hoursNeeded > 0 ? 4 : -5; // penalise overscheduled staff
         // Prefer Strong (3) on big days, allow Learning (1) on quiet days
         const abilityScore = abilityLevel * 3;
-        return { member, score: abilityScore + prefMatch + dayPref + hoursScore, abilityLevel };
+        // Small rotation bonus so different staff get priority each week
+        const rotationBonus = ((member.name.charCodeAt(0)||0) + seedNum) % 3;
+        return { member, score: abilityScore + prefMatch + dayPref + hoursScore + rotationBonus, abilityLevel };
       }).sort((a, b) => b.score - a.score);
 
       const best = scored[0];
@@ -2135,7 +2149,8 @@ function MainApp({venue, onReset}){
   const[selectedDay,setSelectedDay]=useState(null);
   const[actual,setActual]=useState(()=>{ try{const s=localStorage.getItem("wagesave_actual");return s?JSON.parse(s):{}}catch{return{}}});
   const[feedback,setFeedback]=useState(()=>{ try{const s=localStorage.getItem("wagesave_feedback");return s?JSON.parse(s):{}}catch{return{}}});
-  const[weather,setWeather]=useState(null);
+  const[weather,setWeather]=useState(null); // current conditions for display
+  const[forecast,setForecast]=useState({}); // {dateKey: {mult, label, temp}}
   const[showSettings,setShowSettings]=useState(false);
   const[showRoster,setShowRoster]=useState(false);
   const[showCsvNudge,setShowCsvNudge]=useState(()=>{ try{return localStorage.getItem("wagesave_csv_dismissed")!=="true"}catch{return true}});
@@ -2155,8 +2170,34 @@ function MainApp({venue, onReset}){
   useEffect(()=>{
     if(!navigator.geolocation) return;
     navigator.geolocation.getCurrentPosition(pos=>{
-      fetch(`https://api.openweathermap.org/data/2.5/weather?lat=${pos.coords.latitude}&lon=${pos.coords.longitude}&appid=8c9686f901d9e2180d4328a24d2da88f&units=metric`)
-        .then(r=>r.json()).then(d=>{if(d.cod!==200)return;const temp=Math.round(d.main.temp);setWeather({...weatherFromCode(d.weather[0].id,temp),temp,city:d.name});}).catch(()=>{});
+      const API_KEY = "8c9686f901d9e2180d4328a24d2da88f";
+      // Current weather for header display
+      fetch(`https://api.openweathermap.org/data/2.5/weather?lat=${pos.coords.latitude}&lon=${pos.coords.longitude}&appid=${API_KEY}&units=metric`)
+        .then(r=>r.json()).then(d=>{
+          if(d.cod!==200) return;
+          const temp=Math.round(d.main.temp);
+          setWeather({...weatherFromCode(d.weather[0].id,temp),temp,city:d.name});
+        }).catch(()=>{});
+      // 5-day forecast — one entry per 3 hours, we pick midday for each day
+      fetch(`https://api.openweathermap.org/data/2.5/forecast?lat=${pos.coords.latitude}&lon=${pos.coords.longitude}&appid=${API_KEY}&units=metric`)
+        .then(r=>r.json()).then(d=>{
+          if(!d.list) return;
+          const byDay = {};
+          d.list.forEach(entry=>{
+            const dt = new Date(entry.dt * 1000);
+            const dk = dateKey(dt);
+            const hour = dt.getHours();
+            // Prefer midday reading (11am-1pm) for each day
+            if(!byDay[dk] || Math.abs(hour-12) < Math.abs(byDay[dk].hour-12)){
+              byDay[dk] = {
+                hour,
+                ...weatherFromCode(entry.weather[0].id, Math.round(entry.main.temp)),
+                temp: Math.round(entry.main.temp),
+              };
+            }
+          });
+          setForecast(byDay);
+        }).catch(()=>{});
     },()=>{},{timeout:8000});
   },[]);
 
@@ -2168,7 +2209,7 @@ function MainApp({venue, onReset}){
   useEffect(()=>{try{localStorage.setItem("wagesave_feedback",JSON.stringify(feedback));}catch{}},[feedback]);
   useEffect(()=>{try{localStorage.setItem("wagesave_base_revenue",String(baseRevenue));}catch{}},[baseRevenue]);
 
-  const weatherMult=weather?weather.mult:1.0;
+  const weatherMult=weather?weather.mult:1.0; // fallback for days without forecast
   const weekDates=getWeekDates(weekOffset);
   const today=new Date(); today.setHours(0,0,0,0);
   const weekVar=WEEK_VARIANCE[((weekOffset%14)+14)%14];
@@ -2189,8 +2230,18 @@ function MainApp({venue, onReset}){
     if(isSchoolHoliday(date)&&!holiday) flags.push({icon:"🏫",label:"School holidays",impact:"+15%",mult:1.15});
     if(isLongWeekend(date)&&!holiday) flags.push({icon:"📅",label:"Long weekend",impact:"+20%",mult:1.20});
     const eventMult=flags.reduce((acc,f)=>{const p=parseFloat((f.impact||"0").replace("%",""))/100;return acc*(1+p);},1.0);
-    const dayData=calcDay(day,baseRevenue,venue.hasKitchen,venue.servesAlcohol,venue.tradingHours,venue.seasonality,weatherMult,eventMult,weekVar,date,dayRevenue);
-    return{day,date,flags,...dayData};
+    const dk=dateKey(date);
+    const dayForecast=forecast[dk];
+    const dayWeatherMult=dayForecast?dayForecast.mult:weatherMult;
+    const dayWeatherLabel=dayForecast?dayForecast.label:weather?.label;
+    const dayTemp=dayForecast?dayForecast.temp:weather?.temp;
+    const dayData=calcDay(day,baseRevenue,venue.hasKitchen,venue.servesAlcohol,venue.tradingHours,venue.seasonality,dayWeatherMult,eventMult,weekVar,date,dayRevenue);
+    // Add weather flag if forecast shows rain or beach day
+    if(dayForecast&&dayForecast.mult!==1.0&&!flags.some(f=>f.label&&f.label.includes("Rain")||false)){
+      if(dayForecast.mult<1.0) flags.push({icon:"🌧",label:dayWeatherLabel||"Rain",impact:`${Math.round((dayForecast.mult-1)*100)}%`,mult:dayForecast.mult});
+      else if(dayForecast.mult>=1.2) flags.push({icon:"🏖",label:dayWeatherLabel||"Beach day",impact:`+${Math.round((dayForecast.mult-1)*100)}%`,mult:dayForecast.mult});
+    }
+    return{day,date,flags,...dayData,weatherLabel:dayWeatherLabel,weatherTemp:dayTemp};
   });
 
   const openDays=weekData.filter(d=>!d.closed);
