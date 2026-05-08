@@ -225,58 +225,95 @@ function calcRoles(rev, hasKitchen, servesAlcohol) {
   };
 }
 
-// ─── SHIFT TIMING — respects actual service periods ───────────────────────────
+// ─── SHIFT TIMING — staggered, demand-aware ─────────────────────────────────
+// Core principle: build up to peak, wind down after.
+// Not everyone starts at open or stays to close.
 function calcShifts(roles, hours) {
   if (!hours || !hours.open) return [];
   const {openTime:open, closeTime:close, hasDinner, dinnerOpen, dinnerClose} = hours;
+  const dayLen = close - open;
+  const midDay = Math.round(open + dayLen * 0.4);  // ~11am-12pm for most venues
+  const postLunch = Math.round(open + dayLen * 0.55); // ~1-2pm
   const shifts = [];
 
   roles.roles.forEach(({role, count}) => {
     for (let i = 0; i < count; i++) {
+
       if (role === "Kitchen") {
-        if (hasDinner && count > 1) {
-          // Two kitchen — one for day service, one for dinner
-          if (i === 0) shifts.push({role, start:open, end:close, label:"Kitchen — day"});
-          else shifts.push({role, start:dinnerOpen - 1, end:dinnerClose, label:"Kitchen — dinner"});
+        if (hasDinner && count >= 2) {
+          // Day kitchen + dinner kitchen — different people, staggered
+          if (i === 0) shifts.push({role, start:open, end:close, label:"Kitchen"});
+          else shifts.push({role, start:dinnerOpen-1, end:dinnerClose, label:"Kitchen (dinner)"});
         } else if (hasDinner) {
-          // One kitchen covers both — split shift
+          // One kitchen person — split shift
           shifts.push({role, start:open, end:close, label:"Kitchen (day)"});
-          shifts.push({role, start:dinnerOpen - 1, end:dinnerClose, label:"Kitchen (dinner)"});
+          shifts.push({role, start:dinnerOpen-1, end:dinnerClose, label:"Kitchen (dinner)"});
         } else {
-          // Day service only — starts 30min before open for prep, modelled as same hour
           shifts.push({role, start:open, end:close, label:"Kitchen"});
         }
+
       } else if (role === "Coffee") {
-        // Coffee peaks morning — finish before or at close of day service
-        const coffeeEnd = Math.min(close, open + 6);
+        // Coffee: first person opens and covers morning peak
+        // Second person starts mid-morning to cover lunch
+        const coffeeEnd = Math.min(close, open + 5);
         if (i === 0) shifts.push({role, start:open, end:coffeeEnd, label:"Coffee"});
-        else shifts.push({role, start:open + 1, end:close, label:"Coffee"});
+        else shifts.push({role, start:open+2, end:Math.min(close, open+7), label:"Coffee"});
+
       } else if (role === "Coffee & Floor") {
+        // Single person — covers the full day service
         shifts.push({role, start:open, end:close, label:"Coffee & Floor"});
+
       } else if (role === "Floor") {
         if (count === 1) {
-          // Single floor — covers day, if dinner add separate dinner shift
           shifts.push({role, start:open, end:close, label:"Floor"});
           if(hasDinner) shifts.push({role, start:dinnerOpen, end:dinnerClose, label:"Floor (dinner)"});
+
         } else if (count === 2) {
-          // Two floor — opener covers morning/lunch, closer covers afternoon/dinner
-          shifts.push({role, start:open, end:close, label:"Floor — opener"});
-          if(hasDinner){
-            shifts.push({role, start:dinnerOpen, end:dinnerClose, label:"Floor — dinner"});
+          if (hasDinner) {
+            // Opener covers morning through lunch, second covers afternoon and dinner
+            shifts.push({role, start:open, end:postLunch, label:"Floor"});
+            shifts.push({role, start:dinnerOpen, end:dinnerClose, label:"Floor (dinner)"});
           } else {
-            shifts.push({role, start:open+2, end:close, label:"Floor — closer"});
+            // Opener covers morning peak, closer starts mid-morning stays til end
+            shifts.push({role, start:open, end:Math.round(open+dayLen*0.65), label:"Floor"});
+            shifts.push({role, start:midDay, end:close, label:"Floor"});
           }
+
+        } else if (count === 3) {
+          if (hasDinner) {
+            // Three floor on a dinner service day — proper stagger
+            shifts.push({role, start:open, end:postLunch, label:"Floor"});           // morning
+            shifts.push({role, start:midDay, end:close, label:"Floor"});              // mid through afternoon
+            shifts.push({role, start:dinnerOpen, end:dinnerClose, label:"Floor (dinner)"}); // dinner
+          } else {
+            // Three floor, day only — triangle shape
+            shifts.push({role, start:open, end:Math.round(open+dayLen*0.6), label:"Floor"});
+            shifts.push({role, start:open+1, end:close, label:"Floor"});
+            shifts.push({role, start:midDay, end:close, label:"Floor"});
+          }
+
         } else {
-          // 3+ floor — spread across day and dinner
-          shifts.push({role, start:open, end:close, label:"Floor — morning"});
-          shifts.push({role, start:open+2, end:close, label:"Floor — mid"});
-          if(hasDinner) shifts.push({role, start:dinnerOpen, end:dinnerClose, label:"Floor — dinner"});
+          // 4+ floor — full stagger across the day
+          shifts.push({role, start:open, end:postLunch, label:"Floor"});
+          shifts.push({role, start:open+1, end:Math.round(open+dayLen*0.7), label:"Floor"});
+          shifts.push({role, start:midDay, end:close, label:"Floor"});
+          if(hasDinner) shifts.push({role, start:dinnerOpen, end:dinnerClose, label:"Floor (dinner)"});
         }
+
       } else if (role === "Bar") {
-        shifts.push({role, start:hasDinner?dinnerOpen:Math.floor((open+close)/2), end:hasDinner?dinnerClose:close, label:"Bar"});
+        // Bar only needed from midday or dinner onwards
+        const barStart = hasDinner ? dinnerOpen : Math.max(midDay, open+2);
+        const barEnd = hasDinner ? dinnerClose : close;
+        shifts.push({role, start:barStart, end:barEnd, label:"Bar"});
+
       } else if (role === "All-rounder") {
-        if (i === 0) shifts.push({role, start:open, end:close, label:"All-rounder"});
-        else shifts.push({role, start:open+1, end:close, label:"All-rounder"});
+        if (count === 1) {
+          shifts.push({role, start:open, end:close, label:"All-rounder"});
+        } else if (count === 2) {
+          // Two all-rounders — opener and someone who starts mid-morning
+          shifts.push({role, start:open, end:Math.round(open+dayLen*0.65), label:"All-rounder"});
+          shifts.push({role, start:open+1, end:close, label:"All-rounder"});
+        }
       }
     }
   });
@@ -1697,15 +1734,30 @@ function generateRoster(weekData, staff, tradingHours) {
         if (!isStaffAvailable(member, day, date)) return false;
         const abilityLevel = getEffectiveAbility(member, role);
         if (abilityLevel === 0) return false;
-        // Hard exclude staff already assigned to a shift today
-        // EXCEPTION: Kitchen split shifts are ok (day + dinner = two kitchen shifts)
+
         const alreadyToday = dayRoster.filter(r => r.staffId === member.id);
-        if (alreadyToday.length > 0) {
-          const isKitchenSplit = role === "Kitchen" && alreadyToday.every(r => r.role === "Kitchen");
-          if (!isKitchenSplit) return false;
-          // Only allow one kitchen split per person
-          if (alreadyToday.length >= 2) return false;
-        }
+
+        if (alreadyToday.length === 0) return true; // Not yet assigned today — always ok
+
+        // Already has a shift today — check if a split works
+        if (alreadyToday.length >= 2) return false; // Max 2 shifts per person per day
+
+        const existingShift = alreadyToday[0];
+        const gapBetween = shift.start - existingShift.end;
+
+        // Must have at least 1.5 hour break between shifts for a split
+        if (gapBetween < 2) return false;
+
+        // Only flexible or multi-preference staff can do splits
+        const prefs = member.shiftPreferences || [member.shiftPreference || "flexible"];
+        const isFlexible = prefs.includes("flexible");
+        const hasMultiPref = prefs.length > 1;
+        const isOpenerAndCloser = prefs.includes("opener") && prefs.includes("closer");
+        if (!isFlexible && !hasMultiPref && !isOpenerAndCloser) return false;
+
+        // The new shift must start in the afternoon/evening (dinner service)
+        if (shift.start < 15) return false;
+
         return true;
       });
 
@@ -1743,11 +1795,17 @@ function generateRoster(weekData, staff, tradingHours) {
       const best = scored[0];
       if (best && best.score > -999) {
         hoursAllocated[best.member.id] = (hoursAllocated[best.member.id] || 0) + shiftHours;
+        // Check if this is a split shift (person already has a shift today)
+        const existingIdx = dayRoster.findIndex(r => r.staffId === best.member.id);
+        const isSplit = existingIdx >= 0;
+
         dayRoster.push({
           ...shift,
           staffId: best.member.id,
           staffName: best.member.name,
           abilityLevel: getEffectiveAbility(best.member, role),
+          isSplit,
+          splitPersonId: isSplit ? best.member.id : null,
         });
       } else {
         dayRoster.push({
@@ -1847,194 +1905,216 @@ function RosterView({weekData, staff, onClose, venueName, weekLabel, weekOffset,
   }
 
   function generatePDF() {
-    // Dynamically load jsPDF
     const script = document.createElement("script");
     script.src = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
     script.onload = () => {
       const { jsPDF } = window.jspdf;
-      const doc = new jsPDF({ orientation:"portrait", unit:"mm", format:"a4" });
-      const pageW = 210;
-      const margin = 14;
-      const amber = [232, 160, 32];
-      const nearBlack = [28, 21, 16];
-      const warmGrey = [140, 123, 107];
+      const doc = new jsPDF({ orientation:"landscape", unit:"mm", format:"a4" });
+      const pageW = 297;
+      const pageH = 210;
+      const margin = 12;
+      const amber =     [232, 160, 32];
+      const amberLight= [253, 243, 227];
+      const nearBlack = [28,  21,  16];
+      const warmGrey =  [140, 123, 107];
       const lightGrey = [240, 235, 227];
-      let y = 14;
+      const white =     [255, 255, 255];
+
+      // Role colours — on-brand, distinct
+      const ROLE_COL = {
+        "Kitchen":       [220,  88,   0],   // burnt orange
+        "Coffee":        [ 46, 125,  50],   // green
+        "Floor":         [ 21, 101, 192],   // blue
+        "Coffee & Floor":[ 94,  53, 177],   // purple
+        "Bar":           [136,  14,  79],   // deep pink
+        "All-rounder":   [184, 112,  16],   // amber-dark
+      };
+      function roleCol(role) {
+        for(const k of Object.keys(ROLE_COL)) if(role&&role.includes(k.split(" ")[0])) return ROLE_COL[k];
+        return warmGrey;
+      }
+
+      let y = 10;
 
       // ── Header ──
-      // Amber W logo mark (simplified as lines)
-      doc.setDrawColor(...amber);
-      doc.setLineWidth(1.2);
-      doc.lines([[4,8],[4,-8],[4,5],[4,-5]], margin, y+2, [1,1], null, false);
+      doc.setFillColor(...amber);
+      doc.rect(0, 0, pageW, 18, "F");
 
-      // WageSave wordmark
-      doc.setFontSize(18);
-      doc.setTextColor(...amber);
+      doc.setFontSize(14);
       doc.setFont("helvetica","bold");
-      doc.text("W", margin + 12, y + 8);
-      doc.setTextColor(...nearBlack);
-      doc.text("ageSave", margin + 18, y + 8);
+      doc.setTextColor(...white);
+      doc.text("Wage", margin, 12);
+      const ww = doc.getTextWidth("Wage");
+      doc.setTextColor(255,230,150);
+      doc.text("Save", margin + ww, 12);
 
-      // Venue + week
       doc.setFontSize(9);
       doc.setFont("helvetica","normal");
-      doc.setTextColor(...warmGrey);
-      doc.text(`${venueName} · ${weekLabel}`, margin + 12, y + 14);
+      doc.setTextColor(...white);
+      doc.text(`${venueName}  |  Roster: ${weekLabel}`, margin + ww + doc.getTextWidth("Save") + 8, 12);
 
-      // Generated date
       const genDate = new Date().toLocaleDateString("en-AU",{day:"numeric",month:"long",year:"numeric"});
-      doc.text(`Generated ${genDate}`, pageW - margin, y + 8, {align:"right"});
+      doc.text(`Generated ${genDate}`, pageW - margin, 12, {align:"right"});
 
-      // Divider
-      y += 22;
-      doc.setDrawColor(...amber);
-      doc.setLineWidth(0.5);
-      doc.line(margin, y, pageW - margin, y);
-      y += 6;
+      y = 24;
+
+      // ── Figure out trading window across all days ──
+      let globalOpen = 23, globalClose = 0;
+      DAYS.forEach(day => {
+        const dv = weekData.find(d=>d.day===day);
+        if(!dv||dv.closed) return;
+        const h = venue?.tradingHours?.[day];
+        if(!h) return;
+        if(h.openTime < globalOpen) globalOpen = h.openTime;
+        const end = h.hasDinner ? h.dinnerClose : h.closeTime;
+        if(end > globalClose) globalClose = end;
+      });
+      if(globalOpen===23) globalOpen=8;
+      if(globalClose===0) globalClose=22;
+
+      // Layout constants
+      const nameCol = margin;
+      const nameW = 28;
+      const timelineStart = nameCol + nameW + 2;
+      const timelineEnd = pageW - margin - 22;
+      const timelineW = timelineEnd - timelineStart;
+      const rowH = 7;
+      const dayGap = 4;
+      const headerRowH = 5;
+      const totalHours = globalClose - globalOpen;
+
+      function xForHour(h) {
+        return timelineStart + ((h - globalOpen) / totalHours) * timelineW;
+      }
+
+      // ── Time axis header ──
+      doc.setFontSize(6.5);
+      doc.setFont("helvetica","normal");
+      doc.setTextColor(...warmGrey);
+      for(let h = globalOpen; h <= globalClose; h++) {
+        const x = xForHour(h);
+        const label = h%12===0?`${12}${h<12?"am":"pm"}`:`${h%12}${h<12?"am":"pm"}`;
+        doc.text(label, x, y, {align:"center"});
+        doc.setDrawColor(...lightGrey);
+        doc.setLineWidth(0.15);
+        doc.line(x, y+1, x, pageH - 16);
+      }
+      y += 3;
 
       // ── Days ──
-      const ROLE_COLORS = {
-        "Kitchen":      [230, 81, 0],
-        "Coffee":       [46, 125, 50],
-        "Floor":        [21, 101, 192],
-        "Coffee & Floor":[106, 27, 154],
-        "Bar":          [136, 14, 79],
-        "All-rounder":  [184, 112, 16],
-      };
-
       DAYS.forEach(day => {
-        const shifts = localRoster[day];
-        const dayData = weekData.find(d => d.day === day);
-        if (!dayData) return;
+        const dv = weekData.find(d=>d.day===day);
+        const shifts = localRoster[day]||[];
+        if(!dv) return;
 
-        // Check page space
-        const neededHeight = dayData.closed ? 14 : 12 + (shifts?.length || 0) * 9 + 6;
-        if (y + neededHeight > 275) {
-          doc.addPage();
-          y = 14;
+        // Check page overflow
+        const neededH = dv.closed ? headerRowH + dayGap : headerRowH + shifts.length*rowH + dayGap;
+        if(y + neededH > pageH - 16) return; // skip if no space
+
+        // Day label bar
+        doc.setFillColor(...amberLight);
+        doc.rect(margin, y, pageW - margin*2, headerRowH, "F");
+        doc.setDrawColor(...amber);
+        doc.setLineWidth(0.4);
+        doc.rect(margin, y, pageW - margin*2, headerRowH, "S");
+
+        doc.setFontSize(8);
+        doc.setFont("helvetica","bold");
+        doc.setTextColor(...nearBlack);
+        const dayLabel = `${day.toUpperCase()}  ${dv.date.toLocaleDateString("en-AU",{day:"numeric",month:"short"})}`;
+        doc.text(dayLabel, margin+2, y+3.5);
+
+        // Weather right-aligned in day header
+        if(dv.weatherLabel && dv.weatherTemp) {
+          const clean = dv.weatherLabel.replace(/[^ -]/g,"").trim();
+          doc.setFont("helvetica","normal");
+          doc.setFontSize(7);
+          doc.setTextColor(...warmGrey);
+          doc.text(`${clean} ${dv.weatherTemp}C`, pageW-margin-2, y+3.5, {align:"right"});
         }
 
-        if (dayData.closed) {
-          doc.setFontSize(9);
-          doc.setFont("helvetica","bold");
+        if(dv.closed) {
+          doc.setFontSize(7);
+          doc.setFont("helvetica","normal");
           doc.setTextColor(...warmGrey);
-          doc.text(`${day.toUpperCase()} · ${dayData.date.toLocaleDateString("en-AU",{day:"numeric",month:"short"})} · CLOSED`, margin, y);
-          y += 10;
+          doc.text("Closed", margin+2, y+headerRowH+3);
+          y += headerRowH + dayGap + 2;
           return;
         }
 
-        // Day header background
-        doc.setFillColor(...amber);
-        doc.roundedRect(margin, y - 4, pageW - margin*2, 10, 1, 1, "F");
+        y += headerRowH;
 
-        // Day name
-        doc.setFontSize(9);
-        doc.setFont("helvetica","bold");
-        doc.setTextColor(255, 255, 255);
-        doc.text(`${day.toUpperCase()} · ${dayData.date.toLocaleDateString("en-AU",{day:"numeric",month:"short"})}`, margin + 3, y + 3);
+        // Shifts as Gantt bars
+        shifts.forEach((shift, si) => {
+          const isUnassigned = !shift.staffId;
+          const col = isUnassigned ? [192,57,43] : roleCol(shift.role);
+          const startFmt = formatHour(shift.start);
+          const endFmt = formatShiftEnd(shift.end, venue?.tradingHours, day);
 
-        // Revenue
-        doc.text(`$${Math.round(dayData.adj).toLocaleString()}`, pageW - margin - 3, y + 3, {align:"right"});
+          // Alternating row bg
+          if(si%2===0){
+            doc.setFillColor(250,248,245);
+            doc.rect(margin, y, pageW-margin*2, rowH, "F");
+          }
 
-        // Weather if available
-        if(dayData.weatherLabel && dayData.weatherTemp) {
-          doc.setFont("helvetica","normal");
-          doc.setFontSize(8);
-          doc.text(`${dayData.weatherLabel} · ${dayData.weatherTemp}°C`, pageW/2, y + 3, {align:"center"});
-        }
+          // Name
+          doc.setFontSize(7.5);
+          doc.setFont("helvetica","bold");
+          doc.setTextColor(isUnassigned?192:nearBlack[0], isUnassigned?57:nearBlack[1], isUnassigned?43:nearBlack[2]);
+          doc.text(isUnassigned?"Unassigned":shift.staffName, nameCol+1, y+rowH-2);
 
-        y += 10;
+          // Gantt bar
+          const barX = xForHour(Math.max(shift.start, globalOpen));
+          const barEndX = xForHour(Math.min(shift.end, globalClose));
+          const barW = Math.max(barEndX - barX, 2);
+          const barY = y + 1;
+          const barH = rowH - 2.5;
 
-        // Shifts
-        if (!shifts || shifts.length === 0) {
-          doc.setFontSize(8);
-          doc.setFont("helvetica","normal");
-          doc.setTextColor(...warmGrey);
-          doc.text("No shifts", margin + 3, y + 3);
-          y += 8;
-        } else {
-          shifts.forEach((shift, si) => {
-            const isUnassigned = !shift.staffId;
-            const roleColor = ROLE_COLORS[shift.role] || nearBlack;
-            const startFmt = formatHour(shift.start);
-            const endFmt = formatShiftEnd(shift.end, venue?.tradingHours, day);
+          // Bar fill with slight transparency effect
+          doc.setFillColor(...col);
+          doc.roundedRect(barX, barY, barW, barH, 1, 1, "F");
 
-            // Alternating row background
-            if(si % 2 === 0) {
-              doc.setFillColor(253, 250, 246);
-              doc.rect(margin, y - 3, pageW - margin*2, 8, "F");
-            }
-
-            // Role colour dot
-            doc.setFillColor(...roleColor);
-            doc.circle(margin + 3, y + 1, 1.2, "F");
-
-            // Staff name
-            doc.setFontSize(9);
-            doc.setFont("helvetica","bold");
-            doc.setTextColor(isUnassigned ? 192 : nearBlack[0], isUnassigned ? 57 : nearBlack[1], isUnassigned ? 43 : nearBlack[2]);
-            doc.text(isUnassigned ? "⚠ Unassigned" : shift.staffName, margin + 7, y + 2);
-
-            // Role label
+          // Role label inside bar if wide enough
+          if(barW > 20) {
+            doc.setFontSize(6.5);
             doc.setFont("helvetica","normal");
-            doc.setFontSize(8);
-            doc.setTextColor(...warmGrey);
-            doc.text(shift.label || shift.role, margin + 50, y + 2);
+            doc.setTextColor(...white);
+            const roleShort = (shift.label||shift.role).replace(" (day)","").replace(" (dinner)"," eve").replace(" — opener","").replace(" — closer","").replace(" — mid","");
+            doc.text(roleShort, barX+2, barY+barH-1.2);
+          }
 
-            // Times
-            doc.setTextColor(...roleColor);
-            doc.setFont("helvetica","bold");
-            doc.text(`${startFmt}→${endFmt}`, pageW - margin - 3, y + 2, {align:"right"});
+          // Time labels outside bar
+          doc.setFontSize(6.5);
+          doc.setFont("helvetica","normal");
+          doc.setTextColor(...col);
+          doc.text(`${startFmt}-${endFmt}`, pageW-margin-1, y+rowH-2, {align:"right"});
 
-            y += 8;
-          });
-        }
+          y += rowH;
+        });
 
-        // Spacer between days
-        doc.setDrawColor(...lightGrey);
-        doc.setLineWidth(0.3);
-        doc.line(margin, y, pageW - margin, y);
-        y += 5;
-      });
-
-      // ── Weekly hours summary ──
-      if (y + 60 > 275) { doc.addPage(); y = 14; }
-      y += 4;
-      doc.setFontSize(10);
-      doc.setFont("helvetica","bold");
-      doc.setTextColor(...nearBlack);
-      doc.text("WEEKLY HOURS", margin, y);
-      y += 6;
-
-      doc.setDrawColor(...amber);
-      doc.setLineWidth(0.5);
-      doc.line(margin, y, pageW - margin, y);
-      y += 5;
-
-      hoursSummary.filter(s=>s.preferred>0).forEach(s => {
-        if (y > 275) { doc.addPage(); y = 14; }
-        doc.setFontSize(9);
-        doc.setFont("helvetica","bold");
-        doc.setTextColor(...nearBlack);
-        doc.text(s.name, margin, y);
-
-        const isOk = s.allocated >= s.preferred * 0.8;
-        doc.setTextColor(...(isOk ? [74,140,92] : [192,57,43]));
-        doc.text(`${s.allocated}h of ${s.preferred}h preferred`, pageW - margin, y, {align:"right"});
-
+        // Thin divider between days
         doc.setDrawColor(...lightGrey);
         doc.setLineWidth(0.2);
-        doc.line(margin, y + 2, pageW - margin, y + 2);
-        y += 7;
+        doc.line(margin, y, pageW-margin, y);
+        y += dayGap;
       });
 
-      // ── Footer ──
+      // ── Hours summary line ──
+      y += 2;
       doc.setFontSize(7);
       doc.setFont("helvetica","normal");
       doc.setTextColor(...warmGrey);
-      doc.text("Generated by WageSave · wagesave.com", pageW/2, 290, {align:"center"});
+      const hoursText = hoursSummary.filter(s=>s.allocated>0).map(s=>`${s.name} ${s.allocated}h`).join("  ·  ");
+      if(hoursText) doc.text(`Hours this week:  ${hoursText}`, margin, y);
 
-      // Save
+      // ── Footer ──
+      doc.setFillColor(...amberLight);
+      doc.rect(0, pageH-10, pageW, 10, "F");
+      doc.setFontSize(7);
+      doc.setFont("helvetica","normal");
+      doc.setTextColor(...warmGrey);
+      doc.text("Generated by WageSave  ·  wagesave.com", pageW/2, pageH-4, {align:"center"});
+
       doc.save(`${venueName.replace(/[^a-z0-9]/gi,"_")}_Roster_${weekLabel.replace(/ /g,"_")}.pdf`);
     };
     document.head.appendChild(script);
@@ -2119,7 +2199,7 @@ function RosterView({weekData, staff, onClose, venueName, weekLabel, weekOffset,
                 shifts.forEach(s=>{
                   const start=formatHour(s.start);
                   const end=formatShiftEnd(s.end, venue?.tradingHours, day);
-                  lines.push(`  ${s.staffName} — ${s.label||s.role} ${start}→${end}`);
+                  lines.push(`  ${s.staffName}${s.isSplit?" (split)":""} — ${s.label||s.role} ${start}→${end}`);
                 });
                 lines.push("");
               });
@@ -2216,6 +2296,7 @@ function RosterView({weekData, staff, onClose, venueName, weekLabel, weekOffset,
                               color:isUnassigned?B.danger:B.nearBlack,
                               fontFamily:"system-ui,-apple-system,sans-serif"}}>
                               {shift.staffName}
+                              {shift.isSplit&&<span style={{fontSize:11,color:B.amber,marginLeft:6,fontWeight:600,fontFamily:"system-ui,-apple-system,sans-serif"}}>split</span>}
                             </p>
                             <p style={{fontSize:12,color:B.warmGrey,
                               fontFamily:"system-ui,-apple-system,sans-serif"}}>
