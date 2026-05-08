@@ -1634,10 +1634,22 @@ function generateRoster(weekData, staff, tradingHours) {
       const role = shift.role;
 
       // Find best available staff for this shift
+      // For "Coffee & Floor" and "All-rounder" shifts, accept staff with ability in either component role
+      function getEffectiveAbility(member, r) {
+        if (r === "Coffee & Floor") return Math.min(member.roles?.Coffee||0, member.roles?.Floor||0) > 0
+          ? Math.round(((member.roles?.Coffee||0) + (member.roles?.Floor||0)) / 2)
+          : 0;
+        if (r === "All-rounder") return Math.max(
+          member.roles?.Coffee||0, member.roles?.Floor||0,
+          member.roles?.Kitchen||0, member.roles?.Bar||0
+        );
+        return member.roles?.[r] || 0;
+      }
+
       const candidates = staff.filter(member => {
         if (!isStaffAvailable(member, day, date)) return false;
-        const abilityLevel = member.roles?.[role] || 0;
-        if (abilityLevel === 0) return false; // Can't do this role
+        const abilityLevel = getEffectiveAbility(member, role);
+        if (abilityLevel === 0) return false;
         return true;
       });
 
@@ -1655,11 +1667,12 @@ function generateRoster(weekData, staff, tradingHours) {
 
       // Score candidates
       const scored = candidates.map(member => {
-        const abilityLevel = member.roles[role] || 0;
+        const abilityLevel = getEffectiveAbility(member, role);
         const prefMatch = shiftMatchesPref(shift, member.shiftPreference || "flexible") ? 10 : 0;
         const dayPref = (member.preferredDays||[]).includes(day) ? 5 : 0;
-        const hoursNeeded = Math.max(0, (member.preferredHours||0)/5 - hoursAllocated[member.id]);
-        const hoursScore = hoursNeeded > 0 ? 5 : -2;
+        const weeklyTarget = (member.preferredHours||0) / 5; // daily target
+        const hoursNeeded = Math.max(0, weeklyTarget - hoursAllocated[member.id]);
+        const hoursScore = hoursNeeded > 2 ? 8 : hoursNeeded > 0 ? 4 : -5; // penalise overscheduled staff
         // Prefer Strong (3) on big days, allow Learning (1) on quiet days
         const abilityScore = abilityLevel * 3;
         // Don't assign same person to two shifts same day
@@ -1676,7 +1689,7 @@ function generateRoster(weekData, staff, tradingHours) {
           ...shift,
           staffId: best.member.id,
           staffName: best.member.name,
-          abilityLevel: best.abilityLevel,
+          abilityLevel: getEffectiveAbility(best.member, role),
         });
       } else {
         dayRoster.push({
