@@ -248,30 +248,35 @@ function calcShifts(roles, hours) {
         }
       } else if (role === "Coffee") {
         // Coffee peaks morning — finish before or at close of day service
-        const coffeeEnd = hasDinner ? close : Math.min(close, open + 6);
+        const coffeeEnd = Math.min(close, open + 6);
         if (i === 0) shifts.push({role, start:open, end:coffeeEnd, label:"Coffee"});
-        else shifts.push({role, start:open + 1, end:hasDinner?dinnerClose:close, label:"Coffee"});
+        else shifts.push({role, start:open + 1, end:close, label:"Coffee"});
       } else if (role === "Coffee & Floor") {
         shifts.push({role, start:open, end:close, label:"Coffee & Floor"});
       } else if (role === "Floor") {
-        const totalHours = hasDinner ? (close - open) + (dinnerClose - dinnerOpen) : close - open;
         if (count === 1) {
-          shifts.push({role, start:open, end:hasDinner?dinnerClose:close, label:"Floor"});
+          // Single floor — covers day, if dinner add separate dinner shift
+          shifts.push({role, start:open, end:close, label:"Floor"});
+          if(hasDinner) shifts.push({role, start:dinnerOpen, end:dinnerClose, label:"Floor (dinner)"});
         } else if (count === 2) {
-          // Stagger — opener and closer
-          shifts.push({role, start:open, end:hasDinner?Math.floor((close+dinnerOpen)/2):close, label:"Floor — opener"});
-          shifts.push({role, start:open+2, end:hasDinner?dinnerClose:close, label:"Floor — closer"});
+          // Two floor — opener covers morning/lunch, closer covers afternoon/dinner
+          shifts.push({role, start:open, end:close, label:"Floor — opener"});
+          if(hasDinner){
+            shifts.push({role, start:dinnerOpen, end:dinnerClose, label:"Floor — dinner"});
+          } else {
+            shifts.push({role, start:open+2, end:close, label:"Floor — closer"});
+          }
         } else {
-          // 3 floor — morning, mid, dinner
+          // 3+ floor — spread across day and dinner
           shifts.push({role, start:open, end:close, label:"Floor — morning"});
-          shifts.push({role, start:open+2, end:hasDinner?dinnerClose:close, label:"Floor — mid"});
-          shifts.push({role, start:hasDinner?dinnerOpen:Math.floor((open+close)/2), end:hasDinner?dinnerClose:close, label:"Floor — dinner"});
+          shifts.push({role, start:open+2, end:close, label:"Floor — mid"});
+          if(hasDinner) shifts.push({role, start:dinnerOpen, end:dinnerClose, label:"Floor — dinner"});
         }
       } else if (role === "Bar") {
         shifts.push({role, start:hasDinner?dinnerOpen:Math.floor((open+close)/2), end:hasDinner?dinnerClose:close, label:"Bar"});
       } else if (role === "All-rounder") {
-        if (i === 0) shifts.push({role, start:open, end:hasDinner?dinnerClose:close, label:"All-rounder"});
-        else shifts.push({role, start:open+1, end:hasDinner?dinnerClose:close, label:"All-rounder"});
+        if (i === 0) shifts.push({role, start:open, end:close, label:"All-rounder"});
+        else shifts.push({role, start:open+1, end:close, label:"All-rounder"});
       }
     }
   });
@@ -281,6 +286,14 @@ function calcShifts(roles, hours) {
 function formatHour(h) {
   const hour = h%12===0?12:h%12;
   return `${hour}${h<12?"am":"pm"}`;
+}
+
+function formatShiftEnd(endHour, tradingHours, day) {
+  if (!tradingHours || !day) return formatHour(endHour);
+  const h = tradingHours[day];
+  if (!h) return formatHour(endHour);
+  if (endHour === h.closeTime || endHour === h.dinnerClose) return "close";
+  return formatHour(endHour);
 }
 
 function calcDay(day, baseRev, hasKitchen, servesAlcohol, tradingHours, seasonality, weatherMult=1.0, eventMult=1.0, weekVar=1.0, date, dayRevenue=null) {
@@ -911,7 +924,7 @@ function newStaffMember(name=""){
     name,
     roles: { Kitchen:0, Coffee:0, Floor:0, Bar:0 },
     preferredHours: 20,
-    shiftPreference: "flexible",
+    shiftPreferences: ["flexible"],
     preferredDays: [],
     unavailableDays: [],
     unavailableDates: [],
@@ -955,8 +968,8 @@ function StaffCard({member, onEdit, onDelete}){
           <p style={{fontSize:12,color:B.warmGrey,
             fontFamily:"system-ui,-apple-system,sans-serif"}}>
             {member.preferredHours}h/week
-            {" · "}{SHIFT_PREFS.find(s=>s.key===(member.shiftPreference||"flexible"))?.icon}
-            {" "}{SHIFT_PREFS.find(s=>s.key===(member.shiftPreference||"flexible"))?.label}
+            {" · "}{(member.shiftPreferences||[member.shiftPreference]||["flexible"]).map(k=>SHIFT_PREFS.find(s=>s.key===k)?.icon).join("")}
+            {" "}{(member.shiftPreferences||[member.shiftPreference]||["flexible"]).map(k=>SHIFT_PREFS.find(s=>s.key===k)?.label).join("/")}
             {(member.preferredDays||[]).length>0?` · ${member.preferredDays.join(", ")}` :""}
           </p>
         </div>
@@ -1036,11 +1049,23 @@ function StaffEditor({member, onSave, onCancel}){
       <div style={{marginBottom:16}}>
         <p style={{fontSize:11,color:B.warmGrey,marginBottom:8,fontFamily:"system-ui,-apple-system,sans-serif",
           textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:600}}>Shift preference</p>
+        <p style={{fontSize:12,color:B.warmGrey,marginBottom:8,fontFamily:"system-ui,-apple-system,sans-serif"}}>Select all that apply</p>
         <div style={{display:"flex",flexDirection:"column",gap:8}}>
           {SHIFT_PREFS.map(pref=>{
-            const active=(local.shiftPreference||"flexible")===pref.key;
+            const prefs = local.shiftPreferences||[local.shiftPreference||"flexible"];
+            const active = prefs.includes(pref.key);
             return(
-              <button key={pref.key} onClick={()=>setLocal(l=>({...l,shiftPreference:pref.key}))}
+              <button key={pref.key} onClick={()=>{
+                const current = local.shiftPreferences||[local.shiftPreference||"flexible"];
+                let updated;
+                if(pref.key==="flexible"){
+                  updated=["flexible"];
+                } else {
+                  const without = current.filter(k=>k!=="flexible"&&k!==pref.key);
+                  updated = active ? (without.length?without:["flexible"]) : [...without, pref.key];
+                }
+                setLocal(l=>({...l,shiftPreferences:updated}));
+              }}
                 style={{
                   display:"flex",alignItems:"center",gap:12,padding:"11px 14px",
                   borderRadius:12,border:`1.5px solid ${active?B.amber:B.midGrey}`,
@@ -1609,12 +1634,16 @@ function isStaffAvailable(member, day, date) {
   return true;
 }
 
-function shiftMatchesPref(shift, pref) {
-  if (pref === "flexible") return true;
-  if (pref === "opener")  return shift.start <= 10;
-  if (pref === "closer")  return shift.start >= 12;
-  if (pref === "mid")     return shift.start >= 9 && shift.start <= 14;
-  return true;
+function shiftMatchesPref(shift, prefs) {
+  // Accept both string (legacy) and array
+  const prefArr = Array.isArray(prefs) ? prefs : [prefs||"flexible"];
+  if (prefArr.includes("flexible")) return true;
+  return prefArr.some(pref => {
+    if (pref === "opener")  return shift.start <= 10;
+    if (pref === "closer")  return shift.start >= 12;
+    if (pref === "mid")     return shift.start >= 9 && shift.start <= 14;
+    return true;
+  });
 }
 
 function generateRoster(weekData, staff, tradingHours) {
@@ -1694,7 +1723,7 @@ function generateRoster(weekData, staff, tradingHours) {
       // Add small weekly rotation bonus to break ties differently each week
       const scored = candidates.map(member => {
         const abilityLevel = getEffectiveAbility(member, role);
-        const prefMatch = shiftMatchesPref(shift, member.shiftPreference || "flexible") ? 10 : 0;
+        const prefMatch = shiftMatchesPref(shift, member.shiftPreferences || member.shiftPreference || "flexible") ? 10 : 0;
         const hasPreferredDays = (member.preferredDays||[]).length > 0;
         const dayPref = hasPreferredDays
           ? (member.preferredDays.includes(day) ? 8 : -6)
@@ -1752,7 +1781,7 @@ function generateRoster(weekData, staff, tradingHours) {
 }
 
 // ─── ROSTER VIEW ─────────────────────────────────────────────────────────────
-function RosterView({weekData, staff, onClose, venueName, weekLabel, weekOffset, onWeekChange}){
+function RosterView({weekData, staff, onClose, venueName, weekLabel, weekOffset, onWeekChange, venue}){
   const { roster, hoursSummary } = generateRoster(weekData, staff);
   const [editingShift, setEditingShift] = useState(null); // {day, index, mode: "swap"|"time"}
   const [localRoster, setLocalRoster] = useState(roster);
@@ -1887,8 +1916,8 @@ function RosterView({weekData, staff, onClose, venueName, weekLabel, weekOffset,
                 if(!dayData||dayData.closed) return;
                 lines.push(`${day} ${dayData.date.toLocaleDateString("en-AU",{day:"numeric",month:"short"})}:`);
                 shifts.forEach(s=>{
-                  const start=`${s.start%12||12}${s.start<12?"am":"pm"}`;
-                  const end=`${s.end%12||12}${s.end<12?"am":"pm"}`;
+                  const start=formatHour(s.start);
+                  const end=formatShiftEnd(s.end, venue?.tradingHours, day);
                   lines.push(`  ${s.staffName} — ${s.label||s.role} ${start}→${end}`);
                 });
                 lines.push("");
@@ -1963,8 +1992,8 @@ function RosterView({weekData, staff, onClose, venueName, weekLabel, weekOffset,
               ) : (
                 shifts.map((shift, i) => {
                   const isEditing = editingShift?.day===day && editingShift?.index===i;
-                  const startFmt = `${shift.start%12||12}${shift.start<12?"am":"pm"}`;
-                  const endFmt = `${shift.end%12||12}${shift.end<12?"am":"pm"}`;
+                  const startFmt = formatHour(shift.start);
+                  const endFmt = formatShiftEnd(shift.end, venue?.tradingHours, day);
                   const abilityColor = ABILITY_COLORS[shift.abilityLevel||0];
                   const isUnassigned = !shift.staffId;
 
@@ -2490,6 +2519,7 @@ function MainApp({venue, onReset}){
         <RosterView
           weekData={weekData}
           staff={staff||[]}
+          venue={venue}
           venueName={venue.name}
           weekLabel={weekLabel()}
           weekOffset={weekOffset}
