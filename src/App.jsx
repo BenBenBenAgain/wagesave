@@ -1655,6 +1655,15 @@ function generateRoster(weekData, staff, tradingHours) {
         if (!isStaffAvailable(member, day, date)) return false;
         const abilityLevel = getEffectiveAbility(member, role);
         if (abilityLevel === 0) return false;
+        // Hard exclude staff already assigned to a shift today
+        // EXCEPTION: Kitchen split shifts are ok (day + dinner = two kitchen shifts)
+        const alreadyToday = dayRoster.filter(r => r.staffId === member.id);
+        if (alreadyToday.length > 0) {
+          const isKitchenSplit = role === "Kitchen" && alreadyToday.every(r => r.role === "Kitchen");
+          if (!isKitchenSplit) return false;
+          // Only allow one kitchen split per person
+          if (alreadyToday.length >= 2) return false;
+        }
         return true;
       });
 
@@ -1674,16 +1683,15 @@ function generateRoster(weekData, staff, tradingHours) {
       const scored = candidates.map(member => {
         const abilityLevel = getEffectiveAbility(member, role);
         const prefMatch = shiftMatchesPref(shift, member.shiftPreference || "flexible") ? 10 : 0;
-        const dayPref = (member.preferredDays||[]).includes(day) ? 5 : 0;
+        const hasPreferredDays = (member.preferredDays||[]).length > 0;
+        const dayPref = hasPreferredDays
+          ? (member.preferredDays.includes(day) ? 8 : -6)
+          : 0;
         const weeklyTarget = (member.preferredHours||0) / 5; // daily target
         const hoursNeeded = Math.max(0, weeklyTarget - hoursAllocated[member.id]);
         const hoursScore = hoursNeeded > 2 ? 8 : hoursNeeded > 0 ? 4 : -5; // penalise overscheduled staff
         // Prefer Strong (3) on big days, allow Learning (1) on quiet days
         const abilityScore = abilityLevel * 3;
-        // Don't assign same person to two shifts same day
-        const alreadyToday = dayRoster.some(r => r.staffId === member.id);
-        if (alreadyToday) return { member, score: -999 };
-
         return { member, score: abilityScore + prefMatch + dayPref + hoursScore, abilityLevel };
       }).sort((a, b) => b.score - a.score);
 
