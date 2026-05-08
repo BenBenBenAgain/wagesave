@@ -289,10 +289,12 @@ function formatHour(h) {
 }
 
 function formatShiftEnd(endHour, tradingHours, day) {
-  if (!tradingHours || !day) return formatHour(endHour);
-  const h = tradingHours[day];
-  if (!h) return formatHour(endHour);
-  if (endHour === h.closeTime || endHour === h.dinnerClose) return "close";
+  // "close" only for evening endings — 8pm or later
+  if (endHour >= 20) return "close";
+  if (tradingHours && day) {
+    const h = tradingHours[day];
+    if (h && h.hasDinner && endHour === h.dinnerClose && endHour >= 20) return "close";
+  }
   return formatHour(endHour);
 }
 
@@ -1844,6 +1846,200 @@ function RosterView({weekData, staff, onClose, venueName, weekLabel, weekOffset,
     setEditingShift({day, index:(localRoster[day]||[]).length, mode:"time"});
   }
 
+  function generatePDF() {
+    // Dynamically load jsPDF
+    const script = document.createElement("script");
+    script.src = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
+    script.onload = () => {
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF({ orientation:"portrait", unit:"mm", format:"a4" });
+      const pageW = 210;
+      const margin = 14;
+      const amber = [232, 160, 32];
+      const nearBlack = [28, 21, 16];
+      const warmGrey = [140, 123, 107];
+      const lightGrey = [240, 235, 227];
+      let y = 14;
+
+      // ── Header ──
+      // Amber W logo mark (simplified as lines)
+      doc.setDrawColor(...amber);
+      doc.setLineWidth(1.2);
+      doc.lines([[4,8],[4,-8],[4,5],[4,-5]], margin, y+2, [1,1], null, false);
+
+      // WageSave wordmark
+      doc.setFontSize(18);
+      doc.setTextColor(...amber);
+      doc.setFont("helvetica","bold");
+      doc.text("W", margin + 12, y + 8);
+      doc.setTextColor(...nearBlack);
+      doc.text("ageSave", margin + 18, y + 8);
+
+      // Venue + week
+      doc.setFontSize(9);
+      doc.setFont("helvetica","normal");
+      doc.setTextColor(...warmGrey);
+      doc.text(`${venueName} · ${weekLabel}`, margin + 12, y + 14);
+
+      // Generated date
+      const genDate = new Date().toLocaleDateString("en-AU",{day:"numeric",month:"long",year:"numeric"});
+      doc.text(`Generated ${genDate}`, pageW - margin, y + 8, {align:"right"});
+
+      // Divider
+      y += 22;
+      doc.setDrawColor(...amber);
+      doc.setLineWidth(0.5);
+      doc.line(margin, y, pageW - margin, y);
+      y += 6;
+
+      // ── Days ──
+      const ROLE_COLORS = {
+        "Kitchen":      [230, 81, 0],
+        "Coffee":       [46, 125, 50],
+        "Floor":        [21, 101, 192],
+        "Coffee & Floor":[106, 27, 154],
+        "Bar":          [136, 14, 79],
+        "All-rounder":  [184, 112, 16],
+      };
+
+      DAYS.forEach(day => {
+        const shifts = localRoster[day];
+        const dayData = weekData.find(d => d.day === day);
+        if (!dayData) return;
+
+        // Check page space
+        const neededHeight = dayData.closed ? 14 : 12 + (shifts?.length || 0) * 9 + 6;
+        if (y + neededHeight > 275) {
+          doc.addPage();
+          y = 14;
+        }
+
+        if (dayData.closed) {
+          doc.setFontSize(9);
+          doc.setFont("helvetica","bold");
+          doc.setTextColor(...warmGrey);
+          doc.text(`${day.toUpperCase()} · ${dayData.date.toLocaleDateString("en-AU",{day:"numeric",month:"short"})} · CLOSED`, margin, y);
+          y += 10;
+          return;
+        }
+
+        // Day header background
+        doc.setFillColor(...amber);
+        doc.roundedRect(margin, y - 4, pageW - margin*2, 10, 1, 1, "F");
+
+        // Day name
+        doc.setFontSize(9);
+        doc.setFont("helvetica","bold");
+        doc.setTextColor(255, 255, 255);
+        doc.text(`${day.toUpperCase()} · ${dayData.date.toLocaleDateString("en-AU",{day:"numeric",month:"short"})}`, margin + 3, y + 3);
+
+        // Revenue
+        doc.text(`$${Math.round(dayData.adj).toLocaleString()}`, pageW - margin - 3, y + 3, {align:"right"});
+
+        // Weather if available
+        if(dayData.weatherLabel && dayData.weatherTemp) {
+          doc.setFont("helvetica","normal");
+          doc.setFontSize(8);
+          doc.text(`${dayData.weatherLabel} · ${dayData.weatherTemp}°C`, pageW/2, y + 3, {align:"center"});
+        }
+
+        y += 10;
+
+        // Shifts
+        if (!shifts || shifts.length === 0) {
+          doc.setFontSize(8);
+          doc.setFont("helvetica","normal");
+          doc.setTextColor(...warmGrey);
+          doc.text("No shifts", margin + 3, y + 3);
+          y += 8;
+        } else {
+          shifts.forEach((shift, si) => {
+            const isUnassigned = !shift.staffId;
+            const roleColor = ROLE_COLORS[shift.role] || nearBlack;
+            const startFmt = formatHour(shift.start);
+            const endFmt = formatShiftEnd(shift.end, venue?.tradingHours, day);
+
+            // Alternating row background
+            if(si % 2 === 0) {
+              doc.setFillColor(253, 250, 246);
+              doc.rect(margin, y - 3, pageW - margin*2, 8, "F");
+            }
+
+            // Role colour dot
+            doc.setFillColor(...roleColor);
+            doc.circle(margin + 3, y + 1, 1.2, "F");
+
+            // Staff name
+            doc.setFontSize(9);
+            doc.setFont("helvetica","bold");
+            doc.setTextColor(isUnassigned ? 192 : nearBlack[0], isUnassigned ? 57 : nearBlack[1], isUnassigned ? 43 : nearBlack[2]);
+            doc.text(isUnassigned ? "⚠ Unassigned" : shift.staffName, margin + 7, y + 2);
+
+            // Role label
+            doc.setFont("helvetica","normal");
+            doc.setFontSize(8);
+            doc.setTextColor(...warmGrey);
+            doc.text(shift.label || shift.role, margin + 50, y + 2);
+
+            // Times
+            doc.setTextColor(...roleColor);
+            doc.setFont("helvetica","bold");
+            doc.text(`${startFmt}→${endFmt}`, pageW - margin - 3, y + 2, {align:"right"});
+
+            y += 8;
+          });
+        }
+
+        // Spacer between days
+        doc.setDrawColor(...lightGrey);
+        doc.setLineWidth(0.3);
+        doc.line(margin, y, pageW - margin, y);
+        y += 5;
+      });
+
+      // ── Weekly hours summary ──
+      if (y + 60 > 275) { doc.addPage(); y = 14; }
+      y += 4;
+      doc.setFontSize(10);
+      doc.setFont("helvetica","bold");
+      doc.setTextColor(...nearBlack);
+      doc.text("WEEKLY HOURS", margin, y);
+      y += 6;
+
+      doc.setDrawColor(...amber);
+      doc.setLineWidth(0.5);
+      doc.line(margin, y, pageW - margin, y);
+      y += 5;
+
+      hoursSummary.filter(s=>s.preferred>0).forEach(s => {
+        if (y > 275) { doc.addPage(); y = 14; }
+        doc.setFontSize(9);
+        doc.setFont("helvetica","bold");
+        doc.setTextColor(...nearBlack);
+        doc.text(s.name, margin, y);
+
+        const isOk = s.allocated >= s.preferred * 0.8;
+        doc.setTextColor(...(isOk ? [74,140,92] : [192,57,43]));
+        doc.text(`${s.allocated}h of ${s.preferred}h preferred`, pageW - margin, y, {align:"right"});
+
+        doc.setDrawColor(...lightGrey);
+        doc.setLineWidth(0.2);
+        doc.line(margin, y + 2, pageW - margin, y + 2);
+        y += 7;
+      });
+
+      // ── Footer ──
+      doc.setFontSize(7);
+      doc.setFont("helvetica","normal");
+      doc.setTextColor(...warmGrey);
+      doc.text("Generated by WageSave · wagesave.com", pageW/2, 290, {align:"center"});
+
+      // Save
+      doc.save(`${venueName.replace(/[^a-z0-9]/gi,"_")}_Roster_${weekLabel.replace(/ /g,"_")}.pdf`);
+    };
+    document.head.appendChild(script);
+  }
+
   function copyToClipboard() {
     const lines = [`${venueName} — Roster ${weekLabel}`, ""];
     DAYS.forEach(day => {
@@ -1902,9 +2098,14 @@ function RosterView({weekData, staff, onClose, venueName, weekLabel, weekOffset,
             }}>›</button>
           </div>
           <div style={{display:"flex",gap:10}}>
-            <button onClick={copyToClipboard} style={{
+            <button onClick={generatePDF} style={{
               padding:"8px 14px",borderRadius:10,background:B.amber,
               border:"none",color:B.white,fontSize:13,fontWeight:700,
+              cursor:"pointer",fontFamily:"system-ui,-apple-system,sans-serif",
+            }}>📄 PDF</button>
+            <button onClick={copyToClipboard} style={{
+              padding:"8px 14px",borderRadius:10,background:B.white,
+              border:`1.5px solid ${B.midGrey}`,color:B.nearBlack,fontSize:13,fontWeight:700,
               cursor:"pointer",fontFamily:"system-ui,-apple-system,sans-serif",
             }}>📋 Copy</button>
             <button onClick={()=>{
