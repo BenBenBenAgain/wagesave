@@ -1738,10 +1738,21 @@ function generateRoster(weekData, staff, tradingHours) {
 }
 
 // ─── ROSTER VIEW ─────────────────────────────────────────────────────────────
-function RosterView({weekData, staff, onClose, venueName, weekLabel}){
+function RosterView({weekData, staff, onClose, venueName, weekLabel, weekOffset, onWeekChange}){
   const { roster, hoursSummary } = generateRoster(weekData, staff);
-  const [editingShift, setEditingShift] = useState(null); // {day, shiftIndex}
+  const [editingShift, setEditingShift] = useState(null); // {day, index, mode: "swap"|"time"}
   const [localRoster, setLocalRoster] = useState(roster);
+
+  // Regenerate roster when week changes
+  const prevOffset = useRef(weekOffset);
+  useEffect(()=>{
+    if(prevOffset.current !== weekOffset){
+      const {roster:newRoster} = generateRoster(weekData, staff);
+      setLocalRoster(newRoster);
+      setEditingShift(null);
+      prevOffset.current = weekOffset;
+    }
+  },[weekData, weekOffset]);
 
   function reassign(day, shiftIndex, newStaffId) {
     const member = staff.find(s => s.id === newStaffId);
@@ -1753,6 +1764,41 @@ function RosterView({weekData, staff, onClose, venueName, weekLabel}){
       )
     }));
     setEditingShift(null);
+  }
+
+  function updateShiftTime(day, shiftIndex, field, value) {
+    setLocalRoster(prev => ({
+      ...prev,
+      [day]: prev[day].map((s, i) => i === shiftIndex
+        ? { ...s, [field]: Number(value) }
+        : s
+      )
+    }));
+  }
+
+  function deleteShift(day, shiftIndex) {
+    setLocalRoster(prev => ({
+      ...prev,
+      [day]: prev[day].filter((_, i) => i !== shiftIndex)
+    }));
+    setEditingShift(null);
+  }
+
+  function addShift(day) {
+    const dayData = weekData.find(d => d.day === day);
+    const h = dayData?.date ? null : null;
+    const newShift = {
+      role: "Floor", label: "Floor",
+      start: 8, end: 15,
+      staffId: null, staffName: "⚠️ Unassigned",
+      abilityLevel: 0,
+    };
+    setLocalRoster(prev => ({
+      ...prev,
+      [day]: [...(prev[day]||[]), newShift]
+    }));
+    // Open edit for the new shift
+    setEditingShift({day, index:(localRoster[day]||[]).length, mode:"time"});
   }
 
   function copyToClipboard() {
@@ -1789,14 +1835,28 @@ function RosterView({weekData, staff, onClose, venueName, weekLabel}){
         boxShadow:"0 1px 8px rgba(28,21,16,0.06)"}}>
         <div style={{maxWidth:480,margin:"0 auto",display:"flex",
           justifyContent:"space-between",alignItems:"center"}}>
-          <div>
-            <p style={{fontSize:13,fontWeight:700,color:B.amber,
-              letterSpacing:"0.08em",textTransform:"uppercase",
-              fontFamily:"system-ui,-apple-system,sans-serif"}}>Roster</p>
-            <p style={{fontSize:12,color:B.warmGrey,
-              fontFamily:"system-ui,-apple-system,sans-serif"}}>
-              {venueName} · {weekLabel}
-            </p>
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <button onClick={()=>onWeekChange(weekOffset-1)} style={{
+              width:32,height:32,borderRadius:"50%",
+              border:`1.5px solid ${B.midGrey}`,background:B.white,
+              color:B.warmGrey,cursor:"pointer",fontSize:18,
+              display:"flex",alignItems:"center",justifyContent:"center",
+            }}>‹</button>
+            <div style={{textAlign:"center"}}>
+              <p style={{fontSize:13,fontWeight:700,color:B.amber,
+                letterSpacing:"0.08em",textTransform:"uppercase",
+                fontFamily:"system-ui,-apple-system,sans-serif"}}>Roster</p>
+              <p style={{fontSize:11,color:B.warmGrey,
+                fontFamily:"system-ui,-apple-system,sans-serif"}}>
+                {venueName} · {weekLabel}
+              </p>
+            </div>
+            <button onClick={()=>onWeekChange(weekOffset+1)} style={{
+              width:32,height:32,borderRadius:"50%",
+              border:`1.5px solid ${B.midGrey}`,background:B.white,
+              color:B.warmGrey,cursor:"pointer",fontSize:18,
+              display:"flex",alignItems:"center",justifyContent:"center",
+            }}>›</button>
           </div>
           <div style={{display:"flex",gap:10}}>
             <button onClick={copyToClipboard} style={{
@@ -1911,54 +1971,110 @@ function RosterView({weekData, staff, onClose, venueName, weekLabel}){
                             </p>
                           </div>
                         </div>
-                        <button onClick={()=>setEditingShift(
-                          isEditing ? null : {day, index:i}
-                        )} style={{
-                          fontSize:12,color:B.amber,background:"none",
-                          border:`1px solid ${B.amber}`,borderRadius:8,
-                          padding:"4px 10px",cursor:"pointer",fontWeight:600,
-                          fontFamily:"system-ui,-apple-system,sans-serif",
-                        }}>
-                          {isEditing?"Cancel":"Swap"}
-                        </button>
+                        <div style={{display:"flex",gap:6}}>
+                          <button onClick={()=>setEditingShift(
+                            isEditing&&editingShift?.mode==="time" ? null : {day, index:i, mode:"time"}
+                          )} style={{
+                            fontSize:12,color:B.warmGrey,background:"none",
+                            border:`1px solid ${B.midGrey}`,borderRadius:8,
+                            padding:"4px 10px",cursor:"pointer",fontWeight:600,
+                            fontFamily:"system-ui,-apple-system,sans-serif",
+                          }}>⏱</button>
+                          <button onClick={()=>setEditingShift(
+                            isEditing&&editingShift?.mode==="swap" ? null : {day, index:i, mode:"swap"}
+                          )} style={{
+                            fontSize:12,color:B.amber,background:"none",
+                            border:`1px solid ${B.amber}`,borderRadius:8,
+                            padding:"4px 10px",cursor:"pointer",fontWeight:600,
+                            fontFamily:"system-ui,-apple-system,sans-serif",
+                          }}>Swap</button>
+                        </div>
                       </div>
 
-                      {/* Swap panel */}
+                      {/* Edit panel — time or swap */}
                       {isEditing&&(
-                        <div style={{padding:"10px 14px",background:B.white,
+                        <div style={{padding:"12px 14px",background:B.white,
                           borderTop:`1px solid ${B.lightGrey}`}}>
-                          <p style={{fontSize:11,color:B.warmGrey,marginBottom:8,
-                            fontFamily:"system-ui,-apple-system,sans-serif",
-                            textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:600}}>
-                            Assign to:
-                          </p>
-                          {staff.filter(s=>
-                            (s.roles?.[shift.role]||0)>0 &&
-                            isStaffAvailable(s, day, dayData.date)
-                          ).map(s=>(
-                            <button key={s.id} onClick={()=>reassign(day,i,s.id)}
-                              style={{
-                                display:"flex",alignItems:"center",gap:10,
-                                width:"100%",padding:"9px 12px",marginBottom:6,
-                                borderRadius:10,border:`1.5px solid ${shift.staffId===s.id?B.amber:B.lightGrey}`,
-                                background:shift.staffId===s.id?B.amberLight:B.white,
-                                cursor:"pointer",textAlign:"left",
+
+                          {editingShift?.mode==="time"&&(
+                            <>
+                              <p style={{fontSize:11,color:B.warmGrey,marginBottom:10,
                                 fontFamily:"system-ui,-apple-system,sans-serif",
-                              }}>
-                              <div style={{width:8,height:8,borderRadius:"50%",
-                                background:ABILITY_COLORS[s.roles[shift.role]||0],flexShrink:0}}/>
-                              <p style={{fontSize:14,fontWeight:600,color:B.nearBlack,flex:1}}>
-                                {s.name}
+                                textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:600}}>
+                                Edit shift times
                               </p>
-                              <p style={{fontSize:12,color:B.warmGrey}}>
-                                {ABILITY_LEVELS.find(l=>l.key===(s.roles[shift.role]||0))?.short}
+                              <div style={{display:"flex",gap:10,marginBottom:12,alignItems:"center"}}>
+                                <div style={{flex:1}}>
+                                  <p style={{fontSize:11,color:B.warmGrey,marginBottom:4,
+                                    fontFamily:"system-ui,-apple-system,sans-serif",textTransform:"uppercase",
+                                    letterSpacing:"0.06em",fontWeight:600}}>Start</p>
+                                  <select value={shift.start}
+                                    onChange={e=>updateShiftTime(day,i,"start",e.target.value)}
+                                    style={{width:"100%",padding:"9px 10px",borderRadius:10,
+                                      border:`1.5px solid ${B.midGrey}`,fontSize:14,
+                                      fontFamily:"system-ui,-apple-system,sans-serif",
+                                      color:B.nearBlack,background:B.white,outline:"none"}}>
+                                    {HOURS_LIST.map(h=><option key={h.value} value={h.value}>{h.label}</option>)}
+                                  </select>
+                                </div>
+                                <p style={{color:B.warmGrey,fontSize:16,marginTop:16}}>→</p>
+                                <div style={{flex:1}}>
+                                  <p style={{fontSize:11,color:B.warmGrey,marginBottom:4,
+                                    fontFamily:"system-ui,-apple-system,sans-serif",textTransform:"uppercase",
+                                    letterSpacing:"0.06em",fontWeight:600}}>End</p>
+                                  <select value={shift.end}
+                                    onChange={e=>updateShiftTime(day,i,"end",e.target.value)}
+                                    style={{width:"100%",padding:"9px 10px",borderRadius:10,
+                                      border:`1.5px solid ${B.midGrey}`,fontSize:14,
+                                      fontFamily:"system-ui,-apple-system,sans-serif",
+                                      color:B.nearBlack,background:B.white,outline:"none"}}>
+                                    {HOURS_LIST.map(h=><option key={h.value} value={h.value}>{h.label}</option>)}
+                                  </select>
+                                </div>
+                              </div>
+                              <button onClick={()=>deleteShift(day,i)} style={{
+                                width:"100%",padding:"9px 0",borderRadius:10,
+                                background:"transparent",border:`1.5px solid ${B.danger}`,
+                                color:B.danger,fontSize:13,fontWeight:600,cursor:"pointer",
+                                fontFamily:"system-ui,-apple-system,sans-serif",
+                              }}>Delete shift</button>
+                            </>
+                          )}
+
+                          {editingShift?.mode==="swap"&&(
+                            <>
+                              <p style={{fontSize:11,color:B.warmGrey,marginBottom:8,
+                                fontFamily:"system-ui,-apple-system,sans-serif",
+                                textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:600}}>
+                                Assign to:
                               </p>
-                            </button>
-                          ))}
-                          {staff.filter(s=>(s.roles?.[shift.role]||0)>0&&isStaffAvailable(s,day,dayData.date)).length===0&&(
-                            <p style={{fontSize:13,color:B.warmGrey,fontFamily:"system-ui,-apple-system,sans-serif"}}>
-                              No available staff for this role
-                            </p>
+                              {staff.filter(s=>
+                                getEffectiveAbility(s, shift.role)>0 &&
+                                isStaffAvailable(s, day, dayData.date)
+                              ).map(s=>(
+                                <button key={s.id} onClick={()=>reassign(day,i,s.id)}
+                                  style={{
+                                    display:"flex",alignItems:"center",gap:10,
+                                    width:"100%",padding:"9px 12px",marginBottom:6,
+                                    borderRadius:10,border:`1.5px solid ${shift.staffId===s.id?B.amber:B.lightGrey}`,
+                                    background:shift.staffId===s.id?B.amberLight:B.white,
+                                    cursor:"pointer",textAlign:"left",
+                                    fontFamily:"system-ui,-apple-system,sans-serif",
+                                  }}>
+                                  <div style={{width:8,height:8,borderRadius:"50%",
+                                    background:ABILITY_COLORS[getEffectiveAbility(s,shift.role)],flexShrink:0}}/>
+                                  <p style={{fontSize:14,fontWeight:600,color:B.nearBlack,flex:1}}>{s.name}</p>
+                                  <p style={{fontSize:12,color:B.warmGrey}}>
+                                    {ABILITY_LEVELS.find(l=>l.key===getEffectiveAbility(s,shift.role))?.short}
+                                  </p>
+                                </button>
+                              ))}
+                              {staff.filter(s=>getEffectiveAbility(s,shift.role)>0&&isStaffAvailable(s,day,dayData.date)).length===0&&(
+                                <p style={{fontSize:13,color:B.warmGrey,fontFamily:"system-ui,-apple-system,sans-serif"}}>
+                                  No available staff for this role
+                                </p>
+                              )}
+                            </>
                           )}
                         </div>
                       )}
@@ -1966,6 +2082,15 @@ function RosterView({weekData, staff, onClose, venueName, weekLabel}){
                   );
                 })
               )}
+
+              {/* Add shift button */}
+              <button onClick={()=>addShift(day)} style={{
+                width:"100%",padding:"10px 0",marginTop:8,
+                borderRadius:10,border:`1.5px dashed ${B.amber}`,
+                background:"transparent",color:B.amberDark,
+                fontSize:13,fontWeight:600,cursor:"pointer",
+                fontFamily:"system-ui,-apple-system,sans-serif",
+              }}>+ Add shift</button>
             </div>
           );
         })}
@@ -2295,6 +2420,8 @@ function MainApp({venue, onReset}){
           staff={staff||[]}
           venueName={venue.name}
           weekLabel={weekLabel()}
+          weekOffset={weekOffset}
+          onWeekChange={setWeekOffset}
           onClose={()=>setShowRoster(false)}
         />
       )}
