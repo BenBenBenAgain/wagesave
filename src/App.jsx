@@ -1971,7 +1971,7 @@ function StaffManager({staff, onStaffChange}){
 function LocalEventsList({events, onChange}){
   const[editing,setEditing]=useState(null);
 
-  function saveEdit(updated){
+  function saveEventEdit(updated){
     onChange(events.map(e=>e.id===updated.id?updated:e));
     setEditing(null);
   }
@@ -1986,7 +1986,7 @@ function LocalEventsList({events, onChange}){
         editing===ev.id?(
           <EventForm key={ev.id}
             initial={{...ev,date:ev.dates?.[0]||""}}
-            onSave={updated=>{saveEdit(updated);}}
+            onSave={updated=>{saveEventEdit(updated);}}
             onCancel={()=>setEditing(null)}/>
         ):(
           <div key={ev.id} style={{background:B.amberPale,borderRadius:12,padding:14,marginBottom:10,border:`1px solid ${B.lightGrey}`}}>
@@ -2151,7 +2151,7 @@ function VenueSettings({venue, baseRevenue, dayRevenue, localEvents, staff, onSt
   const[local,setLocal]=useState({...venue});
   const[saved,setSaved]=useState(false);
 
-  function updateHours(day,key,val){
+  function updateVenueHours(day,key,val){
     setLocal(d=>({...d,tradingHours:{...d.tradingHours,[day]:{...d.tradingHours[day],[key]:val}}}));
     setSaved(false);
   }
@@ -2323,16 +2323,16 @@ function VenueSettings({venue, baseRevenue, dayRevenue, localEvents, staff, onSt
             <div key={day} style={{marginBottom:12,background:B.amberPale,borderRadius:12,padding:14,border:`1px solid ${h.open?B.lightGrey:B.midGrey}`}}>
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:h.open?12:0}}>
                 <p style={{fontSize:14,fontWeight:700,color:B.nearBlack,fontFamily:"system-ui,-apple-system,sans-serif"}}>{day}</p>
-                <button onClick={()=>updateHours(day,"open",!h.open)} style={{padding:"5px 12px",borderRadius:100,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"system-ui,-apple-system,sans-serif",border:`1.5px solid ${h.open?B.amber:B.midGrey}`,background:h.open?B.amberLight:"transparent",color:h.open?B.amberDark:B.warmGrey,transition:"all 0.15s"}}>{h.open?"Open":"Closed"}</button>
+                <button onClick={()=>updateVenueHours(day,"open",!h.open)} style={{padding:"5px 12px",borderRadius:100,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"system-ui,-apple-system,sans-serif",border:`1.5px solid ${h.open?B.amber:B.midGrey}`,background:h.open?B.amberLight:"transparent",color:h.open?B.amberDark:B.warmGrey,transition:"all 0.15s"}}>{h.open?"Open":"Closed"}</button>
               </div>
               {h.open&&(
                 <>
                   <div style={{display:"flex",gap:10,marginBottom:10}}>
-                    <TimeSelect label="Opens" value={h.openTime} onChange={v=>updateHours(day,"openTime",v)}/>
-                    <TimeSelect label="Closes" value={h.closeTime} onChange={v=>updateHours(day,"closeTime",v)}/>
+                    <TimeSelect label="Opens" value={h.openTime} onChange={v=>updateVenueHours(day,"openTime",v)}/>
+                    <TimeSelect label="Closes" value={h.closeTime} onChange={v=>updateVenueHours(day,"closeTime",v)}/>
                   </div>
-                  <button onClick={()=>updateHours(day,"hasDinner",!h.hasDinner)} style={{padding:"6px 12px",borderRadius:100,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"system-ui,-apple-system,sans-serif",border:`1.5px solid ${h.hasDinner?B.amber:B.midGrey}`,background:h.hasDinner?B.amberLight:"transparent",color:h.hasDinner?B.amberDark:B.warmGrey,transition:"all 0.15s"}}>🌙 Dinner service</button>
-                  {h.hasDinner&&<div style={{display:"flex",gap:10,marginTop:10}}><TimeSelect label="Dinner opens" value={h.dinnerOpen} onChange={v=>updateHours(day,"dinnerOpen",v)}/><TimeSelect label="Dinner closes" value={h.dinnerClose} onChange={v=>updateHours(day,"dinnerClose",v)}/></div>}
+                  <button onClick={()=>updateVenueHours(day,"hasDinner",!h.hasDinner)} style={{padding:"6px 12px",borderRadius:100,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"system-ui,-apple-system,sans-serif",border:`1.5px solid ${h.hasDinner?B.amber:B.midGrey}`,background:h.hasDinner?B.amberLight:"transparent",color:h.hasDinner?B.amberDark:B.warmGrey,transition:"all 0.15s"}}>🌙 Dinner service</button>
+                  {h.hasDinner&&<div style={{display:"flex",gap:10,marginTop:10}}><TimeSelect label="Dinner opens" value={h.dinnerOpen} onChange={v=>updateVenueHours(day,"dinnerOpen",v)}/><TimeSelect label="Dinner closes" value={h.dinnerClose} onChange={v=>updateVenueHours(day,"dinnerClose",v)}/></div>}
                 </>
               )}
             </div>
