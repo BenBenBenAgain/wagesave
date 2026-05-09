@@ -910,6 +910,130 @@ function mergeAnalyses(analyses) {
   return merged;
 }
 
+function CSVResults({analysis, files, fileRef, onComplete, onSkip}){
+  const DAY_ORDER = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
+  return (
+      <div>
+        {/* Summary */}
+        <div style={{background:B.amber, borderRadius:16, padding:"16px 20px", marginBottom:20}}>
+          <p style={{fontSize:13, fontWeight:600, color:"rgba(255,255,255,0.8)", marginBottom:4, fontFamily:"system-ui,-apple-system,sans-serif", textTransform:"uppercase", letterSpacing:"0.06em"}}>
+            {analysis.dateFrom} → {analysis.dateTo}
+          </p>
+          <p style={{fontSize:28, fontWeight:700, color:B.white, fontFamily:"system-ui,-apple-system,sans-serif"}}>
+            ${analysis.totalSales.toLocaleString()}
+          </p>
+          <p style={{fontSize:13, color:"rgba(255,255,255,0.8)", fontFamily:"system-ui,-apple-system,sans-serif"}}>
+            {analysis.totalDays} trading days · avg ${analysis.dailyAvg.toLocaleString()}/day
+          </p>
+        </div>
+
+        {/* Per day breakdown */}
+        <p style={{fontSize:11, letterSpacing:"0.1em", color:B.warmGrey, fontFamily:"system-ui,-apple-system,sans-serif", textTransform:"uppercase", fontWeight:600, marginBottom:12}}>
+          What WageSave learned
+        </p>
+
+        {DAY_ORDER.filter(d => analysis.dayStats[d]).map(day => {
+          const stats = analysis.dayStats[day];
+          const maxVal = Math.max(...DAY_ORDER.filter(d=>analysis.dayStats[d]).map(d=>analysis.dayStats[d].avg));
+          const barWidth = Math.round((stats.avg / maxVal) * 100);
+          return (
+            <div key={day} style={{marginBottom:12, background:B.white, borderRadius:12, padding:"12px 14px", boxShadow:"0 1px 4px rgba(28,21,16,0.05)"}}>
+              <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6}}>
+                <p style={{fontSize:14, fontWeight:600, color:B.nearBlack, fontFamily:"system-ui,-apple-system,sans-serif"}}>{day}</p>
+                <p style={{fontSize:13, color:B.amber, fontWeight:600, fontFamily:"system-ui,-apple-system,sans-serif"}}>${stats.avg.toLocaleString()} avg</p>
+              </div>
+              {/* Mini bar chart */}
+              <div style={{height:6, background:B.lightGrey, borderRadius:3, marginBottom:6}}>
+                <div style={{height:"100%", width:`${barWidth}%`, background:B.amber, borderRadius:3}}/>
+              </div>
+              <div style={{display:"flex", justifyContent:"space-between"}}>
+                <p style={{fontSize:11, color:B.warmGrey, fontFamily:"system-ui,-apple-system,sans-serif"}}>Quiet: ${stats.p25.toLocaleString()}</p>
+                <p style={{fontSize:11, color:B.warmGrey, fontFamily:"system-ui,-apple-system,sans-serif"}}>{stats.count} data points</p>
+                <p style={{fontSize:11, color:B.warmGrey, fontFamily:"system-ui,-apple-system,sans-serif"}}>Busy: ${stats.p75.toLocaleString()}</p>
+              </div>
+            </div>
+          );
+        })}
+
+        {analysis.hasHourly && (
+          <div style={{background:B.amberLight, borderRadius:12, padding:"12px 14px", marginBottom:12, border:`1px solid ${B.midGrey}`}}>
+            <p style={{fontSize:13, fontWeight:600, color:B.amberDark, fontFamily:"system-ui,-apple-system,sans-serif", marginBottom:2}}>
+              📈 Hourly patterns detected
+            </p>
+            <p style={{fontSize:12, color:B.warmGrey, fontFamily:"system-ui,-apple-system,sans-serif"}}>
+              WageSave will use your peak trading hours to suggest better shift times.
+            </p>
+          </div>
+        )}
+
+        {/* Weather correlation results */}
+        {analysis.weatherCorrelation ? (
+          <div style={{background:B.white, borderRadius:12, padding:"14px 16px", marginBottom:16, border:`1px solid ${B.lightGrey}`, boxShadow:"0 1px 4px rgba(28,21,16,0.05)"}}>
+            <p style={{fontSize:13, fontWeight:600, color:B.nearBlack, marginBottom:12, fontFamily:"system-ui,-apple-system,sans-serif"}}>
+              🌤 Weather impact on your venue
+            </p>
+            {Object.entries(analysis.weatherCorrelation.avgBySales).map(([cat, avg]) => {
+              const mult = analysis.weatherCorrelation.multipliers[cat];
+              const n = analysis.weatherCorrelation.sampleSizes[cat];
+              const icons = {beach:"🏖", sunny:"☀️", cloudy:"🌥", rain:"🌧"};
+              const labels = {beach:"Beach day", sunny:"Sunny", cloudy:"Cloudy", rain:"Rain"};
+              const color = mult >= 1.1 ? B.success : mult <= 0.9 ? B.danger : B.warmGrey;
+              return (
+                <div key={cat} style={{display:"flex", justifyContent:"space-between", alignItems:"center",
+                  paddingBottom:8, marginBottom:8, borderBottom:`1px solid ${B.lightGrey}`}}>
+                  <div style={{display:"flex", alignItems:"center", gap:8}}>
+                    <span style={{fontSize:18}}>{icons[cat]}</span>
+                    <div>
+                      <p style={{fontSize:13, fontWeight:600, color:B.nearBlack, fontFamily:"system-ui,-apple-system,sans-serif"}}>{labels[cat]}</p>
+                      <p style={{fontSize:11, color:B.warmGrey, fontFamily:"system-ui,-apple-system,sans-serif"}}>{n} days · avg ${avg.toLocaleString()}</p>
+                    </div>
+                  </div>
+                  <p style={{fontSize:14, fontWeight:700, color, fontFamily:"system-ui,-apple-system,sans-serif"}}>
+                    {mult >= 1 ? "+" : ""}{Math.round((mult-1)*100)}%
+                  </p>
+                </div>
+              );
+            })}
+            <p style={{fontSize:11, color:B.warmGrey, fontFamily:"system-ui,-apple-system,sans-serif"}}>
+              Based on your actual trading history. WageSave will use these instead of generic estimates.
+            </p>
+          </div>
+        ) : (
+          <div style={{background:B.amberPale, borderRadius:12, padding:"10px 14px", marginBottom:16}}>
+            <p style={{fontSize:12, color:B.warmGrey, fontFamily:"system-ui,-apple-system,sans-serif"}}>
+              🌤 Fetching historical weather to calculate your venue's weather sensitivity...
+            </p>
+          </div>
+        )}
+
+        {/* Add more files option */}
+        <button onClick={()=>fileRef.current?.click()} style={{
+          width:"100%", padding:"11px 0", borderRadius:12, marginBottom:10,
+          background:"transparent", border:`1.5px solid ${B.amber}`,
+          color:B.amberDark, fontSize:13, fontWeight:600, cursor:"pointer",
+          fontFamily:"system-ui,-apple-system,sans-serif",
+        }}>+ Add more CSV files</button>
+
+        <button onClick={()=>onComplete(buildDayRevenueFromCSV(analysis), analysis)} style={{
+          width:"100%", padding:"16px 0", background:B.amber,
+          color:B.white, border:"none", borderRadius:14,
+          fontSize:16, fontWeight:700, cursor:"pointer",
+          fontFamily:"system-ui,-apple-system,sans-serif",
+          boxShadow:`0 4px 16px rgba(232,160,32,0.3)`,
+          marginBottom:10,
+        }}>
+          Apply to my venue →
+        </button>
+        <button onClick={onSkip} style={{
+          width:"100%", padding:"12px 0", borderRadius:12,
+          background:"transparent", border:`1.5px solid ${B.midGrey}`,
+          color:B.warmGrey, fontSize:14, fontWeight:600, cursor:"pointer",
+          fontFamily:"system-ui,-apple-system,sans-serif",
+        }}>Set ranges manually instead</button>
+      </div>
+  );
+}
+
 function CSVUploader({ onComplete, onSkip }) {
   const [step, setStep] = useState(0); // 0=upload, 1=analysing, 2=results
   const [error, setError] = useState(null);
@@ -1050,130 +1174,14 @@ function CSVUploader({ onComplete, onSkip }) {
 
       {/* Step 1 - processing */}
 
-      {step === 2 && analysis && (()=>{
-        const DAY_ORDER = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
-        const DAY_ABBR = {"Monday":"Mon","Tuesday":"Tue","Wednesday":"Wed","Thursday":"Thu","Friday":"Fri","Saturday":"Sat","Sunday":"Sun"};
-        return (
-      <div>
-        {/* Summary */}
-        <div style={{background:B.amber, borderRadius:16, padding:"16px 20px", marginBottom:20}}>
-          <p style={{fontSize:13, fontWeight:600, color:"rgba(255,255,255,0.8)", marginBottom:4, fontFamily:"system-ui,-apple-system,sans-serif", textTransform:"uppercase", letterSpacing:"0.06em"}}>
-            {analysis.dateFrom} → {analysis.dateTo}
-          </p>
-          <p style={{fontSize:28, fontWeight:700, color:B.white, fontFamily:"system-ui,-apple-system,sans-serif"}}>
-            ${analysis.totalSales.toLocaleString()}
-          </p>
-          <p style={{fontSize:13, color:"rgba(255,255,255,0.8)", fontFamily:"system-ui,-apple-system,sans-serif"}}>
-            {analysis.totalDays} trading days · avg ${analysis.dailyAvg.toLocaleString()}/day
-          </p>
-        </div>
+      {step === 2 && analysis && <CSVResults
+        analysis={analysis}
+        files={files}
+        fileRef={fileRef}
+        onComplete={onComplete}
+        onSkip={onSkip}
+      />}
 
-        {/* Per day breakdown */}
-        <p style={{fontSize:11, letterSpacing:"0.1em", color:B.warmGrey, fontFamily:"system-ui,-apple-system,sans-serif", textTransform:"uppercase", fontWeight:600, marginBottom:12}}>
-          What WageSave learned
-        </p>
-
-        {DAY_ORDER.filter(d => analysis.dayStats[d]).map(day => {
-          const stats = analysis.dayStats[day];
-          const maxVal = Math.max(...DAY_ORDER.filter(d=>analysis.dayStats[d]).map(d=>analysis.dayStats[d].avg));
-          const barWidth = Math.round((stats.avg / maxVal) * 100);
-          return (
-            <div key={day} style={{marginBottom:12, background:B.white, borderRadius:12, padding:"12px 14px", boxShadow:"0 1px 4px rgba(28,21,16,0.05)"}}>
-              <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6}}>
-                <p style={{fontSize:14, fontWeight:600, color:B.nearBlack, fontFamily:"system-ui,-apple-system,sans-serif"}}>{day}</p>
-                <p style={{fontSize:13, color:B.amber, fontWeight:600, fontFamily:"system-ui,-apple-system,sans-serif"}}>${stats.avg.toLocaleString()} avg</p>
-              </div>
-              {/* Mini bar chart */}
-              <div style={{height:6, background:B.lightGrey, borderRadius:3, marginBottom:6}}>
-                <div style={{height:"100%", width:`${barWidth}%`, background:B.amber, borderRadius:3}}/>
-              </div>
-              <div style={{display:"flex", justifyContent:"space-between"}}>
-                <p style={{fontSize:11, color:B.warmGrey, fontFamily:"system-ui,-apple-system,sans-serif"}}>Quiet: ${stats.p25.toLocaleString()}</p>
-                <p style={{fontSize:11, color:B.warmGrey, fontFamily:"system-ui,-apple-system,sans-serif"}}>{stats.count} data points</p>
-                <p style={{fontSize:11, color:B.warmGrey, fontFamily:"system-ui,-apple-system,sans-serif"}}>Busy: ${stats.p75.toLocaleString()}</p>
-              </div>
-            </div>
-          );
-        })}
-
-        {analysis.hasHourly && (
-          <div style={{background:B.amberLight, borderRadius:12, padding:"12px 14px", marginBottom:12, border:`1px solid ${B.midGrey}`}}>
-            <p style={{fontSize:13, fontWeight:600, color:B.amberDark, fontFamily:"system-ui,-apple-system,sans-serif", marginBottom:2}}>
-              📈 Hourly patterns detected
-            </p>
-            <p style={{fontSize:12, color:B.warmGrey, fontFamily:"system-ui,-apple-system,sans-serif"}}>
-              WageSave will use your peak trading hours to suggest better shift times.
-            </p>
-          </div>
-        )}
-
-        {/* Weather correlation results */}
-        {analysis.weatherCorrelation ? (
-          <div style={{background:B.white, borderRadius:12, padding:"14px 16px", marginBottom:16, border:`1px solid ${B.lightGrey}`, boxShadow:"0 1px 4px rgba(28,21,16,0.05)"}}>
-            <p style={{fontSize:13, fontWeight:600, color:B.nearBlack, marginBottom:12, fontFamily:"system-ui,-apple-system,sans-serif"}}>
-              🌤 Weather impact on your venue
-            </p>
-            {Object.entries(analysis.weatherCorrelation.avgBySales).map(([cat, avg]) => {
-              const mult = analysis.weatherCorrelation.multipliers[cat];
-              const n = analysis.weatherCorrelation.sampleSizes[cat];
-              const icons = {beach:"🏖", sunny:"☀️", cloudy:"🌥", rain:"🌧"};
-              const labels = {beach:"Beach day", sunny:"Sunny", cloudy:"Cloudy", rain:"Rain"};
-              const color = mult >= 1.1 ? B.success : mult <= 0.9 ? B.danger : B.warmGrey;
-              return (
-                <div key={cat} style={{display:"flex", justifyContent:"space-between", alignItems:"center",
-                  paddingBottom:8, marginBottom:8, borderBottom:`1px solid ${B.lightGrey}`}}>
-                  <div style={{display:"flex", alignItems:"center", gap:8}}>
-                    <span style={{fontSize:18}}>{icons[cat]}</span>
-                    <div>
-                      <p style={{fontSize:13, fontWeight:600, color:B.nearBlack, fontFamily:"system-ui,-apple-system,sans-serif"}}>{labels[cat]}</p>
-                      <p style={{fontSize:11, color:B.warmGrey, fontFamily:"system-ui,-apple-system,sans-serif"}}>{n} days · avg ${avg.toLocaleString()}</p>
-                    </div>
-                  </div>
-                  <p style={{fontSize:14, fontWeight:700, color, fontFamily:"system-ui,-apple-system,sans-serif"}}>
-                    {mult >= 1 ? "+" : ""}{Math.round((mult-1)*100)}%
-                  </p>
-                </div>
-              );
-            })}
-            <p style={{fontSize:11, color:B.warmGrey, fontFamily:"system-ui,-apple-system,sans-serif"}}>
-              Based on your actual trading history. WageSave will use these instead of generic estimates.
-            </p>
-          </div>
-        ) : (
-          <div style={{background:B.amberPale, borderRadius:12, padding:"10px 14px", marginBottom:16}}>
-            <p style={{fontSize:12, color:B.warmGrey, fontFamily:"system-ui,-apple-system,sans-serif"}}>
-              🌤 Fetching historical weather to calculate your venue's weather sensitivity...
-            </p>
-          </div>
-        )}
-
-        {/* Add more files option */}
-        <button onClick={()=>fileRef.current?.click()} style={{
-          width:"100%", padding:"11px 0", borderRadius:12, marginBottom:10,
-          background:"transparent", border:`1.5px solid ${B.amber}`,
-          color:B.amberDark, fontSize:13, fontWeight:600, cursor:"pointer",
-          fontFamily:"system-ui,-apple-system,sans-serif",
-        }}>+ Add more CSV files</button>
-
-        <button onClick={()=>onComplete(buildDayRevenueFromCSV(analysis), analysis)} style={{
-          width:"100%", padding:"16px 0", background:B.amber,
-          color:B.white, border:"none", borderRadius:14,
-          fontSize:16, fontWeight:700, cursor:"pointer",
-          fontFamily:"system-ui,-apple-system,sans-serif",
-          boxShadow:`0 4px 16px rgba(232,160,32,0.3)`,
-          marginBottom:10,
-        }}>
-          Apply to my venue →
-        </button>
-        <button onClick={onSkip} style={{
-          width:"100%", padding:"12px 0", borderRadius:12,
-          background:"transparent", border:`1.5px solid ${B.midGrey}`,
-          color:B.warmGrey, fontSize:14, fontWeight:600, cursor:"pointer",
-          fontFamily:"system-ui,-apple-system,sans-serif",
-        }}>Set ranges manually instead</button>
-      </div>
-        );
-      })()}
     </div>
   );
 }
@@ -1438,6 +1446,13 @@ function Onboarding({onComplete}){
               dayRevenue,
               csvAnalysis:analysis,
               venueWeatherMults: analysis.weatherCorrelation || null,
+              csvMeta: {
+                dateFrom: analysis?.dateFrom,
+                dateTo: analysis?.dateTo,
+                totalDays: analysis?.totalDays,
+                dailyAvg: analysis?.dailyAvg,
+                uploadedAt: new Date().toISOString(),
+              },
             }));
             finish();
           }}
@@ -2208,18 +2223,57 @@ function VenueSettings({venue, baseRevenue, dayRevenue, localEvents, staff, onSt
       {/* Per-day revenue sliders */}
       <div style={sectionStyle}>
         <Label text={`Typical revenue per day — ${new Date().toLocaleString("en-AU",{month:"long"})}`}/>
-        <p style={{fontSize:12,color:B.warmGrey,marginBottom:12,fontFamily:"system-ui,-apple-system,sans-serif",lineHeight:1.5}}>
-          Slide each day to where it typically sits. Or upload a sales CSV to set ranges automatically.
-        </p>
+
+        {/* Show uploaded CSV status */}
+        {venue?.csvMeta ? (
+          <div style={{background:B.successLight,borderRadius:12,padding:"12px 14px",marginBottom:12,border:`1px solid ${B.success}22`}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+              <div>
+                <p style={{fontSize:13,fontWeight:600,color:B.success,marginBottom:2,fontFamily:"system-ui,-apple-system,sans-serif"}}>
+                  📊 Data from your CSV
+                </p>
+                <p style={{fontSize:12,color:B.warmGrey,fontFamily:"system-ui,-apple-system,sans-serif"}}>
+                  {venue.csvMeta.dateFrom} → {venue.csvMeta.dateTo}
+                </p>
+                <p style={{fontSize:12,color:B.warmGrey,fontFamily:"system-ui,-apple-system,sans-serif"}}>
+                  {venue.csvMeta.totalDays} trading days · avg ${(venue.csvMeta.dailyAvg||0).toLocaleString()}/day
+                </p>
+                {venue.csvMeta.uploadedAt&&(
+                  <p style={{fontSize:11,color:B.midGrey,marginTop:2,fontFamily:"system-ui,-apple-system,sans-serif"}}>
+                    Uploaded {new Date(venue.csvMeta.uploadedAt).toLocaleDateString("en-AU",{day:"numeric",month:"long",year:"numeric"})}
+                  </p>
+                )}
+                {venue.venueWeatherMults&&(
+                  <p style={{fontSize:11,color:B.success,marginTop:2,fontFamily:"system-ui,-apple-system,sans-serif"}}>
+                    ✓ Venue weather sensitivity calculated
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <p style={{fontSize:12,color:B.warmGrey,marginBottom:12,fontFamily:"system-ui,-apple-system,sans-serif",lineHeight:1.5}}>
+            Slide each day to where it typically sits. Or upload a sales CSV to set ranges automatically.
+          </p>
+        )}
+
         <div style={{marginBottom:16}}>
           <CSVUploader
             onComplete={(newDayRevenue, analysis)=>{
               onDayRevenueChange(newDayRevenue);
-              if(analysis?.weatherCorrelation) {
-                // Update venue with new weather multipliers
-                const updated = {...venue, venueWeatherMults: analysis.weatherCorrelation};
-                try{localStorage.setItem("wagesave_venue", JSON.stringify(updated));}catch{}
-              }
+              // Save CSV meta + weather multipliers to venue
+              const updated = {
+                ...venue,
+                csvMeta: {
+                  dateFrom: analysis?.dateFrom,
+                  dateTo: analysis?.dateTo,
+                  totalDays: analysis?.totalDays,
+                  dailyAvg: analysis?.dailyAvg,
+                  uploadedAt: new Date().toISOString(),
+                },
+                venueWeatherMults: analysis?.weatherCorrelation || venue.venueWeatherMults,
+              };
+              try{localStorage.setItem("wagesave_venue", JSON.stringify(updated));}catch{}
               setSaved(false);
             }}
             onSkip={()=>{}}
@@ -3127,7 +3181,7 @@ function MainApp({venue, onReset}){
   const[forecast,setForecast]=useState({}); // {dateKey: {mult, label, temp}}
   const[showSettings,setShowSettings]=useState(false);
   const[showRoster,setShowRoster]=useState(false);
-  const[showCsvNudge,setShowCsvNudge]=useState(()=>{ try{return localStorage.getItem("wagesave_csv_dismissed")!=="true"}catch{return true}});
+
   const[showMonthPrompt,setShowMonthPrompt]=useState(()=>{
     try{
       const saved=localStorage.getItem("wagesave_month_dismissed");
@@ -3270,22 +3324,7 @@ function MainApp({venue, onReset}){
 
       <div style={{maxWidth:480,margin:"0 auto",padding:"20px 18px 0"}}>
 
-        {/* CSV nudge */}
-        {showCsvNudge&&(
-          <div style={{background:B.amberLight,borderRadius:14,padding:"12px 16px",marginBottom:16,display:"flex",alignItems:"center",gap:10,border:`1px solid ${B.midGrey}`}}>
-            <span style={{fontSize:18}}>📊</span>
-            <div style={{flex:1}}>
-              <p style={{fontSize:13,fontWeight:600,color:B.amberDark,fontFamily:"system-ui,-apple-system,sans-serif"}}>Improve your predictions</p>
-              <p style={{fontSize:12,color:B.warmGrey,fontFamily:"system-ui,-apple-system,sans-serif"}}>Upload last year's sales CSV</p>
-            </div>
-            <button onClick={()=>{
-              setShowCsvNudge(false);
-              try{localStorage.setItem("wagesave_csv_dismissed","true");}catch{}
-              setShowSettings(true);
-            }} style={{padding:"6px 12px",borderRadius:8,background:B.amber,border:"none",color:B.white,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"system-ui,-apple-system,sans-serif"}}>Upload</button>
-            <button onClick={()=>{setShowCsvNudge(false);try{localStorage.setItem("wagesave_csv_dismissed","true");}catch{}}} style={{fontSize:18,color:B.warmGrey,background:"none",border:"none",cursor:"pointer",lineHeight:1,padding:"0 4px"}}>×</button>
-          </div>
-        )}
+
 
         {/* Feedback prompt removed from home — lives in day drawer instead */}
 
