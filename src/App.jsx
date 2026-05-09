@@ -504,35 +504,82 @@ const FEEDBACK_OPTIONS = [
 function FeedbackPanel({feedback, onSave}){
   const[note,setNote]=useState(feedback?.note||"");
   const[saved,setSaved]=useState(!!feedback?.outcome);
+  const[showNote,setShowNote]=useState(false);
+
+  const OPTIONS = [
+    {key:"right", label:"Staffing was right", short:"Right on",  color:B.success,  bg:B.successLight},
+    {key:"over",  label:"Too many staff",      short:"Too many", color:B.danger,   bg:B.dangerLight},
+    {key:"under", label:"Not enough staff",    short:"Not enough",  color:"#E65100",  bg:"#FFF3E0"},
+  ];
 
   if(saved&&feedback?.outcome){
-    const opt=FEEDBACK_OPTIONS.find(o=>o.key===feedback.outcome);
+    const opt=OPTIONS.find(o=>o.key===feedback.outcome);
     return(
-      <div style={{background:opt.bg,borderRadius:12,padding:"12px 16px",display:"flex",alignItems:"center",gap:10}}>
-        <span style={{fontSize:18}}>{opt.icon}</span>
-        <div style={{flex:1}}>
-          <p style={{fontSize:13,fontWeight:600,color:opt.color,fontFamily:"system-ui,-apple-system,sans-serif"}}>{opt.label}</p>
-          {feedback.note&&<p style={{fontSize:12,color:B.warmGrey,marginTop:2,fontFamily:"system-ui,-apple-system,sans-serif"}}>{feedback.note}</p>}
+      <div>
+        <p style={{fontSize:11,letterSpacing:"0.1em",color:B.warmGrey,fontFamily:"system-ui,-apple-system,sans-serif",textTransform:"uppercase",fontWeight:600,marginBottom:10}}>Staffing feedback</p>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:opt.bg,borderRadius:12,padding:"12px 16px"}}>
+          <div>
+            <p style={{fontSize:14,fontWeight:700,color:opt.color,fontFamily:"system-ui,-apple-system,sans-serif"}}>{opt.label}</p>
+            {feedback.note&&<p style={{fontSize:12,color:B.warmGrey,marginTop:3,fontFamily:"system-ui,-apple-system,sans-serif"}}>{feedback.note}</p>}
+          </div>
+          <button onClick={()=>{setSaved(false);setShowNote(false);}} style={{
+            fontSize:12,color:B.warmGrey,background:"none",border:`1px solid ${B.midGrey}`,
+            borderRadius:8,padding:"4px 10px",cursor:"pointer",
+            fontFamily:"system-ui,-apple-system,sans-serif",fontWeight:600,
+          }}>Edit</button>
         </div>
-        <button onClick={()=>setSaved(false)} style={{fontSize:12,color:B.warmGrey,background:"none",border:"none",cursor:"pointer",fontFamily:"system-ui,-apple-system,sans-serif"}}>Edit</button>
       </div>
     );
   }
 
   return(
     <div>
-      <Label text="How did staffing go?"/>
-      <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:12}}>
-        {FEEDBACK_OPTIONS.map(opt=>(
-          <button key={opt.key} onClick={()=>{onSave({outcome:opt.key,note,savedAt:new Date().toISOString()});setSaved(true);}} style={{display:"flex",alignItems:"center",gap:12,padding:"13px 16px",borderRadius:12,border:`1.5px solid ${B.midGrey}`,background:B.white,cursor:"pointer",textAlign:"left",fontFamily:"system-ui,-apple-system,sans-serif",transition:"all 0.15s"}}
-            onMouseEnter={e=>{e.currentTarget.style.borderColor=opt.color;e.currentTarget.style.background=opt.bg;}}
-            onMouseLeave={e=>{e.currentTarget.style.borderColor=B.midGrey;e.currentTarget.style.background=B.white;}}>
-            <span style={{fontSize:20}}>{opt.icon}</span>
-            <span style={{fontSize:14,fontWeight:600,color:opt.color}}>{opt.label}</span>
+      <p style={{fontSize:11,letterSpacing:"0.1em",color:B.warmGrey,fontFamily:"system-ui,-apple-system,sans-serif",textTransform:"uppercase",fontWeight:600,marginBottom:10}}>How did staffing go?</p>
+
+      {/* Three clean pill buttons */}
+      <div style={{display:"flex",gap:8,marginBottom:showNote?12:0}}>
+        {OPTIONS.map(opt=>(
+          <button key={opt.key}
+            onClick={()=>{
+              onSave({outcome:opt.key,note,savedAt:new Date().toISOString()});
+              setSaved(true);
+            }}
+            style={{
+              flex:1,padding:"11px 8px",borderRadius:12,
+              border:`1.5px solid ${B.lightGrey}`,
+              background:B.white,
+              cursor:"pointer",
+              fontFamily:"system-ui,-apple-system,sans-serif",
+              fontSize:13,fontWeight:600,
+              color:B.nearBlack,
+              transition:"all 0.15s",
+            }}
+            onMouseEnter={e=>{e.currentTarget.style.borderColor=opt.color;e.currentTarget.style.background=opt.bg;e.currentTarget.style.color=opt.color;}}
+            onMouseLeave={e=>{e.currentTarget.style.borderColor=B.lightGrey;e.currentTarget.style.background=B.white;e.currentTarget.style.color=B.nearBlack;}}>
+            {opt.short}
           </button>
         ))}
       </div>
-      <textarea placeholder="Optional notes — e.g. 'AFL crowd came in late'" value={note} onChange={e=>setNote(e.target.value)} style={{width:"100%",padding:"12px 14px",borderRadius:12,border:`1.5px solid ${B.midGrey}`,fontSize:14,resize:"none",fontFamily:"system-ui,-apple-system,sans-serif",color:B.nearBlack,background:B.white,outline:"none",minHeight:64,boxSizing:"border-box"}}/>
+
+      {/* Add note toggle */}
+      {!showNote&&(
+        <button onClick={()=>setShowNote(true)} style={{
+          marginTop:8,fontSize:12,color:B.warmGrey,background:"none",
+          border:"none",cursor:"pointer",fontFamily:"system-ui,-apple-system,sans-serif",
+          textDecoration:"underline",padding:0,
+        }}>+ Add a note</button>
+      )}
+
+      {showNote&&(
+        <textarea
+          placeholder="e.g. 'AFL crowd came in late', 'beach day was quiet at lunch'"
+          value={note} onChange={e=>setNote(e.target.value)}
+          style={{width:"100%",padding:"12px 14px",borderRadius:12,
+            border:`1.5px solid ${B.midGrey}`,fontSize:13,resize:"none",
+            fontFamily:"system-ui,-apple-system,sans-serif",color:B.nearBlack,
+            background:B.white,outline:"none",minHeight:60,boxSizing:"border-box",
+            marginTop:8}}/>
+      )}
     </div>
   );
 }
@@ -3195,11 +3242,7 @@ function MainApp({venue, onReset}){
   const totalBudget=openDays.reduce((a,d)=>a+d.laborBudget,0);
   const selectedData=selectedDay?weekData.find(d=>d.day===selectedDay):null;
 
-  // Past days that need feedback
-  const needFeedback = weekData.filter(d=>{
-    const dn=new Date(d.date); dn.setHours(0,0,0,0);
-    return dn<today && !d.closed && !feedback[`${d.day}-${dateKey(d.date)}`];
-  });
+  // Feedback lives in day drawer — not on home screen
 
   return(
     <div style={{minHeight:"100vh",background:B.amberPale,paddingBottom:80}}>
@@ -3235,37 +3278,16 @@ function MainApp({venue, onReset}){
               <p style={{fontSize:13,fontWeight:600,color:B.amberDark,fontFamily:"system-ui,-apple-system,sans-serif"}}>Improve your predictions</p>
               <p style={{fontSize:12,color:B.warmGrey,fontFamily:"system-ui,-apple-system,sans-serif"}}>Upload last year's sales CSV</p>
             </div>
-            <button style={{padding:"6px 12px",borderRadius:8,background:B.amber,border:"none",color:B.white,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"system-ui,-apple-system,sans-serif"}}>Upload</button>
+            <button onClick={()=>{
+              setShowCsvNudge(false);
+              try{localStorage.setItem("wagesave_csv_dismissed","true");}catch{}
+              setShowSettings(true);
+            }} style={{padding:"6px 12px",borderRadius:8,background:B.amber,border:"none",color:B.white,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"system-ui,-apple-system,sans-serif"}}>Upload</button>
             <button onClick={()=>{setShowCsvNudge(false);try{localStorage.setItem("wagesave_csv_dismissed","true");}catch{}}} style={{fontSize:18,color:B.warmGrey,background:"none",border:"none",cursor:"pointer",lineHeight:1,padding:"0 4px"}}>×</button>
           </div>
         )}
 
-        {/* Feedback prompt for past days */}
-        {needFeedback.length>0&&(
-          <div style={{background:B.white,borderRadius:14,padding:"14px 16px",marginBottom:16,border:`1.5px solid ${B.amber}`,boxShadow:`0 2px 12px rgba(232,160,32,0.15)`}}>
-            <p style={{fontSize:13,fontWeight:600,color:B.nearBlack,marginBottom:4,fontFamily:"system-ui,-apple-system,sans-serif"}}>
-              How did {needFeedback[0].day} go?
-            </p>
-            <p style={{fontSize:12,color:B.warmGrey,marginBottom:12,fontFamily:"system-ui,-apple-system,sans-serif"}}>
-              Was the staffing prediction right? Your feedback makes WageSave smarter.
-            </p>
-            <div style={{display:"flex",gap:8}}>
-              {FEEDBACK_OPTIONS.map(opt=>(
-                <button key={opt.key}
-                  onClick={()=>{
-                    const d=needFeedback[0];
-                    setFeedback(p=>({...p,[`${d.day}-${dateKey(d.date)}`]:{outcome:opt.key,note:"",savedAt:new Date().toISOString()}}));
-                  }}
-                  style={{flex:1,padding:"9px 4px",borderRadius:10,border:`1.5px solid ${B.midGrey}`,background:B.white,cursor:"pointer",fontFamily:"system-ui,-apple-system,sans-serif",fontSize:18,transition:"all 0.15s"}}
-                  title={opt.label}
-                  onMouseEnter={e=>{e.currentTarget.style.background=opt.bg;e.currentTarget.style.borderColor=opt.color;}}
-                  onMouseLeave={e=>{e.currentTarget.style.background=B.white;e.currentTarget.style.borderColor=B.midGrey;}}>
-                  {opt.icon}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
+        {/* Feedback prompt removed from home — lives in day drawer instead */}
 
         {/* Monthly update prompt */}
         {showMonthPrompt&&!showCsvNudge&&(
@@ -3386,14 +3408,13 @@ function MainApp({venue, onReset}){
 
                     {flags.length>0&&<div style={{display:"flex",gap:3,marginTop:8,flexWrap:"wrap"}}>{flags.map((f,i)=><span key={i} title={`${f.label} ${f.impact}`} style={{fontSize:14}}>{f.icon}</span>)}</div>}
 
-                    {/* Feedback on card */}
+                    {/* Feedback outcome on card if given */}
                     {fb?(
-                      <div style={{marginTop:8,paddingTop:8,borderTop:`1px solid ${B.lightGrey}`,fontSize:18}}>
-                        {FEEDBACK_OPTIONS.find(o=>o.key===fb.outcome)?.icon}
-                      </div>
-                    ):isPast&&!closed?(
                       <div style={{marginTop:8,paddingTop:8,borderTop:`1px solid ${B.lightGrey}`}}>
-                        <p style={{fontSize:11,color:B.amber,fontWeight:600,fontFamily:"system-ui,-apple-system,sans-serif"}}>Tap to give feedback</p>
+                        <p style={{fontSize:11,fontWeight:600,fontFamily:"system-ui,-apple-system,sans-serif",
+                          color:fb.outcome==="right"?B.success:fb.outcome==="over"?B.danger:"#E65100"}}>
+                          {fb.outcome==="right"?"✓ Right on":fb.outcome==="over"?"↑ Too many":"↓ Not enough"}
+                        </p>
                       </div>
                     ):act>0?(
                       <div style={{marginTop:8,paddingTop:8,borderTop:`1px solid ${B.lightGrey}`,fontSize:11,fontWeight:600,fontFamily:"system-ui,-apple-system,sans-serif",color:diff>0?B.danger:B.success}}>
