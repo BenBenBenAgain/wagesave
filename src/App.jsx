@@ -203,7 +203,6 @@ const DEFAULT_DAY_REVENUE = {
 
 // ─── ROLE MODEL ───────────────────────────────────────────────────────────────
 function calcRoles(rev, hasKitchen, servesAlcohol) {
-  if (rev < 500)  return {roles:[{role:"All-rounder",count:1}],total:1,note:"Quiet day — one person can manage"};
   if (rev < 1500) return {roles:[{role:"All-rounder",count:2}],total:2,note:"Two covering all bases"};
   if (rev < 3000) {
     if (hasKitchen) return {roles:[{role:"Kitchen",count:1},{role:"Coffee & Floor",count:1},{role:"Floor",count:1}],total:3,note:"Roles starting to split"};
@@ -307,12 +306,19 @@ function calcShifts(roles, hours) {
         shifts.push({role, start:barStart, end:barEnd, label:"Bar"});
 
       } else if (role === "All-rounder") {
+        // Note: the forEach loop already iterates i=0,1 for count=2
+        // So we push ONE shift per iteration, not the full pattern at once
         if (count === 1) {
           shifts.push({role, start:open, end:close, label:"All-rounder"});
         } else if (count === 2) {
-          // Two all-rounders — opener and someone who starts mid-morning
-          shifts.push({role, start:open, end:Math.round(open+dayLen*0.65), label:"All-rounder"});
-          shifts.push({role, start:open+1, end:close, label:"All-rounder"});
+          const openerEnd   = Math.round(open + dayLen * 0.60);
+          const closerStart = Math.round(open + dayLen * 0.35);
+          if (i === 0) shifts.push({role, start:open,        end:openerEnd, label:"All-rounder"});
+          if (i === 1) shifts.push({role, start:closerStart, end:close,     label:"All-rounder"});
+        } else if (count >= 3) {
+          const starts = [open, Math.round(open+dayLen*0.2), Math.round(open+dayLen*0.45)];
+          const ends   = [Math.round(open+dayLen*0.55), Math.round(open+dayLen*0.75), close];
+          if (i < 3) shifts.push({role, start:starts[i], end:ends[i], label:"All-rounder"});
         }
       }
     }
