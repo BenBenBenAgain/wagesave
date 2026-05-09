@@ -777,35 +777,105 @@ function buildDayRevenueFromCSV(analysis) {
   return result;
 }
 
+function mergeAnalyses(analyses) {
+  // Merge multiple CSV analyses into one combined analysis
+  const merged = {
+    dayStats: {},
+    hourlyCurves: {},
+    hasHourly: analyses.some(a => a.hasHourly),
+    dateFrom: analyses.map(a=>a.dateFrom).sort()[0],
+    dateTo: analyses.map(a=>a.dateTo).sort().reverse()[0],
+    totalSales: analyses.reduce((sum,a) => sum+a.totalSales, 0),
+    totalDays: analyses.reduce((sum,a) => sum+a.totalDays, 0),
+  };
+  merged.dailyAvg = Math.round(merged.totalSales / merged.totalDays);
+
+  // Combine day stats — pool all values then recalculate
+  const allVals = {};
+  analyses.forEach(analysis => {
+    Object.entries(analysis.dayStats).forEach(([day, stats]) => {
+      if (!allVals[day]) allVals[day] = [];
+      allVals[day].push(...(stats.vals || [stats.avg]));
+    });
+  });
+
+  Object.entries(allVals).forEach(([day, vals]) => {
+    vals.sort((a,b) => a-b);
+    const avg = Math.round(vals.reduce((a,b)=>a+b,0) / vals.length);
+    const p25 = Math.round(vals[Math.floor(vals.length*0.25)]);
+    const p75 = Math.round(vals[Math.floor(vals.length*0.75)]);
+    merged.dayStats[day] = {
+      avg, p25, p75,
+      low: Math.round(vals[0]),
+      high: Math.round(vals[vals.length-1]),
+      count: vals.length,
+      vals,
+    };
+  });
+
+  return merged;
+}
+
 function CSVUploader({ onComplete, onSkip }) {
   const [step, setStep] = useState(0); // 0=upload, 1=analysing, 2=results
   const [error, setError] = useState(null);
   const [analysis, setAnalysis] = useState(null);
-  const [fileName, setFileName] = useState("");
+  const [files, setFiles] = useState([]); // [{name, rows}]
+  const [processing, setProcessing] = useState(false);
   const fileRef = useRef(null);
 
-  function handleFile(file) {
-    if (!file) return;
-    setFileName(file.name);
-    setStep(1);
-    const reader = new FileReader();
-    reader.onload = e => {
-      try {
-        const rows = parseCSV(e.target.result);
-        const result = analyseCSVData(rows);
-        if (!result) {
-          setError("Couldn't read this file. Make sure it's a Square, Lightspeed or Xero CSV export.");
-          setStep(0);
-          return;
-        }
-        setAnalysis(result);
-        setStep(2);
-      } catch(err) {
-        setError("Something went wrong reading the file. Try exporting again from your POS.");
-        setStep(0);
+  function readFile(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = e => {
+        try {
+          const rows = parseCSV(e.target.result);
+          resolve({ name: file.name, rows });
+        } catch { reject(new Error("Couldn't read " + file.name)); }
+      };
+      reader.onerror = () => reject(new Error("Failed to read " + file.name));
+      reader.readAsText(file);
+    });
+  }
+
+  async function handleFiles(fileList) {
+    if (!fileList.length) return;
+    setProcessing(true);
+    setError(null);
+
+    try {
+      const loaded = await Promise.all(Array.from(fileList).map(readFile));
+      const newFiles = [...files, ...loaded];
+      setFiles(newFiles);
+
+      // Analyse all files combined
+      const analyses = newFiles.map(f => analyseCSVData(f.rows)).filter(Boolean);
+      if (analyses.length === 0) {
+        setError("Couldn't read these files. Make sure they're Square, Lightspeed or Xero CSV exports.");
+        setProcessing(false);
+        return;
       }
-    };
-    reader.readAsText(file);
+
+      const combined = analyses.length === 1 ? analyses[0] : mergeAnalyses(analyses);
+      setAnalysis(combined);
+      setStep(2);
+    } catch(err) {
+      setError(err.message || "Something went wrong. Try exporting again from your POS.");
+    }
+    setProcessing(false);
+  }
+
+  function removeFile(index) {
+    const newFiles = files.filter((_,i) => i !== index);
+    setFiles(newFiles);
+    if (newFiles.length === 0) {
+      setStep(0);
+      setAnalysis(null);
+    } else {
+      const analyses = newFiles.map(f => analyseCSVData(f.rows)).filter(Boolean);
+      const combined = analyses.length === 1 ? analyses[0] : mergeAnalyses(analyses);
+      setAnalysis(combined);
+    }
   }
 
   const inputStyle = {
@@ -817,16 +887,42 @@ function CSVUploader({ onComplete, onSkip }) {
 
   if (step === 0) return (
     <div>
-      <input ref={fileRef} type="file" accept=".csv,.txt" onChange={e=>handleFile(e.target.files[0])} style={{display:"none"}}/>
+      <input ref={fileRef} type="file" accept=".csv,.txt" multiple
+        onChange={e=>handleFiles(e.target.files)} style={{display:"none"}}/>
+
+      {/* Uploaded files list */}
+      {files.length > 0 && (
+        <div style={{marginBottom:12}}>
+          {files.map((f,i) => (
+            <div key={i} style={{display:"flex",alignItems:"center",justifyContent:"space-between",
+              background:B.successLight,borderRadius:10,padding:"8px 12px",marginBottom:6}}>
+              <p style={{fontSize:13,color:B.success,fontWeight:600,fontFamily:"system-ui,-apple-system,sans-serif"}}>✓ {f.name}</p>
+              <button onClick={()=>removeFile(i)} style={{fontSize:16,color:B.warmGrey,background:"none",border:"none",cursor:"pointer"}}>×</button>
+            </div>
+          ))}
+        </div>
+      )}
+
       <button onClick={()=>fileRef.current?.click()} style={{
-        width:"100%", padding:"28px 20px", borderRadius:14,
+        width:"100%", padding:files.length>0?"16px 20px":"28px 20px", borderRadius:14,
         border:`2px dashed ${B.amber}`, background:B.amberLight,
         cursor:"pointer", textAlign:"center",
       }}>
-        <p style={{fontSize:28, marginBottom:8}}>📊</p>
-        <p style={{fontSize:15, fontWeight:600, color:B.amberDark, marginBottom:4, fontFamily:"system-ui,-apple-system,sans-serif"}}>Upload your sales CSV</p>
-        <p style={{fontSize:13, color:B.warmGrey, fontFamily:"system-ui,-apple-system,sans-serif"}}>Square · Lightspeed · Xero · any daily sales export</p>
+        <p style={{fontSize:files.length>0?20:28, marginBottom:6}}>📊</p>
+        <p style={{fontSize:15, fontWeight:600, color:B.amberDark, marginBottom:4, fontFamily:"system-ui,-apple-system,sans-serif"}}>
+          {files.length>0 ? "Add another CSV" : "Upload your sales CSV"}
+        </p>
+        <p style={{fontSize:13, color:B.warmGrey, fontFamily:"system-ui,-apple-system,sans-serif"}}>
+          {files.length>0 ? "Add more months or years of data" : "Square · Lightspeed · Xero · select multiple files at once"}
+        </p>
       </button>
+
+      {processing && (
+        <div style={{textAlign:"center",padding:"12px 0"}}>
+          <div style={{width:24,height:24,borderRadius:"50%",border:`2px solid ${B.lightGrey}`,borderTopColor:B.amber,animation:"spin 0.8s linear infinite",margin:"0 auto"}}/>
+        </div>
+      )}
+
       {error && <p style={{fontSize:13, color:B.danger, marginTop:12, fontFamily:"system-ui,-apple-system,sans-serif"}}>{error}</p>}
       <button onClick={onSkip} style={{
         width:"100%", marginTop:12, padding:"12px 0", borderRadius:12,
@@ -837,13 +933,7 @@ function CSVUploader({ onComplete, onSkip }) {
     </div>
   );
 
-  if (step === 1) return (
-    <div style={{textAlign:"center", padding:"32px 0"}}>
-      <div style={{width:40, height:40, borderRadius:"50%", border:`3px solid ${B.lightGrey}`, borderTopColor:B.amber, animation:"spin 0.8s linear infinite", margin:"0 auto 16px"}}/>
-      <p style={{fontSize:15, fontWeight:600, color:B.nearBlack, fontFamily:"system-ui,-apple-system,sans-serif"}}>Reading your sales data...</p>
-      <p style={{fontSize:13, color:B.warmGrey, fontFamily:"system-ui,-apple-system,sans-serif"}}>{fileName}</p>
-    </div>
-  );
+  // Step 1 now handled inline with processing spinner
 
   if (step === 2 && analysis) {
     const DAY_ORDER = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
@@ -902,6 +992,14 @@ function CSVUploader({ onComplete, onSkip }) {
             </p>
           </div>
         )}
+
+        {/* Add more files option */}
+        <button onClick={()=>fileRef.current?.click()} style={{
+          width:"100%", padding:"11px 0", borderRadius:12, marginBottom:10,
+          background:"transparent", border:`1.5px solid ${B.amber}`,
+          color:B.amberDark, fontSize:13, fontWeight:600, cursor:"pointer",
+          fontFamily:"system-ui,-apple-system,sans-serif",
+        }}>+ Add more CSV files</button>
 
         <button onClick={()=>onComplete(buildDayRevenueFromCSV(analysis), analysis)} style={{
           width:"100%", padding:"16px 0", background:B.amber,
