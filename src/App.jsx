@@ -932,10 +932,13 @@ function CSVUploader({ onComplete, onSkip }) {
     color:B.nearBlack, background:B.white, outline:"none", boxSizing:"border-box"
   };
 
-  if (step === 0) return (
+  // Always render — wraps all steps so fileRef is always available
+  return (
     <div>
       <input ref={fileRef} type="file" accept=".csv,.txt" multiple
         onChange={e=>handleFiles(e.target.files)} style={{display:"none"}}/>
+
+      {step === 0 && <div>
 
       {/* Uploaded files list */}
       {files.length > 0 && (
@@ -977,16 +980,14 @@ function CSVUploader({ onComplete, onSkip }) {
         color:B.warmGrey, fontSize:14, fontWeight:600, cursor:"pointer",
         fontFamily:"system-ui,-apple-system,sans-serif",
       }}>Skip — I'll set ranges manually</button>
-    </div>
-  );
+      </div>}
 
-  // Step 1 now handled inline with processing spinner
+      {/* Step 1 - processing */}
 
-  if (step === 2 && analysis) {
-    const DAY_ORDER = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
-    const DAY_ABBR = {"Monday":"Mon","Tuesday":"Tue","Wednesday":"Wed","Thursday":"Thu","Friday":"Fri","Saturday":"Sat","Sunday":"Sun"};
-
-    return (
+      {step === 2 && analysis && (()=>{
+        const DAY_ORDER = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
+        const DAY_ABBR = {"Monday":"Mon","Tuesday":"Tue","Wednesday":"Wed","Thursday":"Thu","Friday":"Fri","Saturday":"Sat","Sunday":"Sun"};
+        return (
       <div>
         {/* Summary */}
         <div style={{background:B.amber, borderRadius:16, padding:"16px 20px", marginBottom:20}}>
@@ -1065,10 +1066,10 @@ function CSVUploader({ onComplete, onSkip }) {
           fontFamily:"system-ui,-apple-system,sans-serif",
         }}>Set ranges manually instead</button>
       </div>
-    );
-  }
-
-  return null;
+        );
+      })()}
+    </div>
+  );
 }
 
 // ─── ONBOARDING ──────────────────────────────────────────────────────────────
