@@ -645,6 +645,287 @@ function RangeSlider({min, max, low, high, onChange, step=100}){
   );
 }
 
+// ─── CSV ANALYSER ────────────────────────────────────────────────────────────
+function parseCSV(text) {
+  const lines = text.trim().split("\n");
+  const headers = lines[0].split(",").map(h => h.trim().toLowerCase().replace(/[^a-z_]/g,"_"));
+  return lines.slice(1).map(line => {
+    const vals = line.split(",");
+    const row = {};
+    headers.forEach((h, i) => row[h] = (vals[i]||"").trim());
+    return row;
+  }).filter(r => Object.values(r).some(v => v));
+}
+
+function analyseCSVData(rows) {
+  // Detect format — daily or hourly
+  const hasTime = rows.some(r => r.time_start || r.time || r.hour);
+  const hasDate = rows.some(r => r.date);
+  const hasSales = rows.some(r => r.sales || r.gross_sales || r.total || r.amount);
+  const hasDay = rows.some(r => r.day_of_week || r.day);
+
+  if (!hasDate || !hasSales) return null;
+
+  // Extract daily totals
+  const dailyTotals = {}; // { "YYYY-MM-DD": { sales, day } }
+  const dayOfWeekSales = { Monday:[], Tuesday:[], Wednesday:[], Thursday:[], Friday:[], Saturday:[], Sunday:[] };
+
+  rows.forEach(row => {
+    const date = row.date;
+    if (!date || date.includes("DAILY_TOTAL")) return;
+
+    const salesVal = parseFloat(row.sales || row.gross_sales || row.total || row.amount || 0);
+    if (isNaN(salesVal) || salesVal === 0) return;
+
+    const day = row.day_of_week || row.day || "";
+
+    if (hasTime) {
+      // Hourly data — aggregate to daily
+      if (!dailyTotals[date]) dailyTotals[date] = { sales: 0, day };
+      dailyTotals[date].sales += salesVal;
+    } else {
+      // Already daily
+      dailyTotals[date] = { sales: salesVal, day };
+    }
+  });
+
+  // Fill day of week
+  Object.values(dailyTotals).forEach(({ sales, day }) => {
+    if (dayOfWeekSales[day]) dayOfWeekSales[day].push(sales);
+  });
+
+  // Calculate averages and ranges per day
+  const dayStats = {};
+  const DAYS_ORDER = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
+  DAYS_ORDER.forEach(day => {
+    const vals = dayOfWeekSales[day];
+    if (vals.length === 0) return;
+    vals.sort((a,b) => a-b);
+    const avg = Math.round(vals.reduce((a,b)=>a+b,0) / vals.length);
+    const low = Math.round(vals[0]);
+    const high = Math.round(vals[vals.length-1]);
+    const p25 = Math.round(vals[Math.floor(vals.length*0.25)]);
+    const p75 = Math.round(vals[Math.floor(vals.length*0.75)]);
+    dayStats[day] = { avg, low, high, p25, p75, count: vals.length, vals };
+  });
+
+  // Hourly demand curves per day of week
+  const hourlyCurves = {};
+  if (hasTime) {
+    rows.forEach(row => {
+      const day = row.day_of_week || row.day || "";
+      const timeStr = row.time_start || row.time || "";
+      const salesVal = parseFloat(row.sales || 0);
+      if (!day || !timeStr || isNaN(salesVal) || salesVal === 0) return;
+      if (timeStr === "DAILY_TOTAL") return;
+      const hour = parseInt(timeStr.split(":")[0]);
+      if (isNaN(hour)) return;
+      if (!hourlyCurves[day]) hourlyCurves[day] = {};
+      if (!hourlyCurves[day][hour]) hourlyCurves[day][hour] = [];
+      hourlyCurves[day][hour].push(salesVal);
+    });
+  }
+
+  // Average hourly curves
+  const avgHourlyCurves = {};
+  Object.entries(hourlyCurves).forEach(([day, hours]) => {
+    avgHourlyCurves[day] = {};
+    Object.entries(hours).forEach(([hour, vals]) => {
+      avgHourlyCurves[day][hour] = Math.round(vals.reduce((a,b)=>a+b,0) / vals.length);
+    });
+  });
+
+  // Total and date range
+  const dates = Object.keys(dailyTotals).sort();
+  const totalSales = Object.values(dailyTotals).reduce((a,b) => a + b.sales, 0);
+  const totalDays = Object.keys(dailyTotals).length;
+
+  return {
+    dayStats,
+    hourlyCurves: avgHourlyCurves,
+    hasHourly: hasTime,
+    dateFrom: dates[0],
+    dateTo: dates[dates.length-1],
+    totalSales: Math.round(totalSales),
+    totalDays,
+    dailyAvg: Math.round(totalSales / totalDays),
+  };
+}
+
+function buildDayRevenueFromCSV(analysis) {
+  // Convert analysis to WageSave day revenue ranges
+  // Use p25 as quiet end, p75 as busy end — more robust than min/max
+  const DAY_MAP = {
+    Mon: "Monday", Tue: "Tuesday", Wed: "Wednesday",
+    Thu: "Thursday", Fri: "Friday", Sat: "Saturday", Sun: "Sunday"
+  };
+  const result = {};
+  Object.entries(DEFAULT_DAY_REVENUE).forEach(([abbr, defaults]) => {
+    const fullDay = DAY_MAP[abbr];
+    const stats = analysis.dayStats[fullDay];
+    if (stats && stats.count >= 2) {
+      result[abbr] = {
+        min: Math.max(100, stats.low),
+        max: Math.min(stats.high * 1.5, stats.high + 2000),
+        low: stats.p25 || stats.low,
+        high: stats.p75 || stats.high,
+      };
+    } else {
+      result[abbr] = defaults;
+    }
+  });
+  return result;
+}
+
+function CSVUploader({ onComplete, onSkip }) {
+  const [step, setStep] = useState(0); // 0=upload, 1=analysing, 2=results
+  const [error, setError] = useState(null);
+  const [analysis, setAnalysis] = useState(null);
+  const [fileName, setFileName] = useState("");
+  const fileRef = useRef(null);
+
+  function handleFile(file) {
+    if (!file) return;
+    setFileName(file.name);
+    setStep(1);
+    const reader = new FileReader();
+    reader.onload = e => {
+      try {
+        const rows = parseCSV(e.target.result);
+        const result = analyseCSVData(rows);
+        if (!result) {
+          setError("Couldn't read this file. Make sure it's a Square, Lightspeed or Xero CSV export.");
+          setStep(0);
+          return;
+        }
+        setAnalysis(result);
+        setStep(2);
+      } catch(err) {
+        setError("Something went wrong reading the file. Try exporting again from your POS.");
+        setStep(0);
+      }
+    };
+    reader.readAsText(file);
+  }
+
+  const inputStyle = {
+    width:"100%", padding:"12px 14px", borderRadius:12,
+    border:`1.5px solid ${B.midGrey}`, fontSize:15,
+    fontFamily:"system-ui,-apple-system,sans-serif",
+    color:B.nearBlack, background:B.white, outline:"none", boxSizing:"border-box"
+  };
+
+  if (step === 0) return (
+    <div>
+      <input ref={fileRef} type="file" accept=".csv,.txt" onChange={e=>handleFile(e.target.files[0])} style={{display:"none"}}/>
+      <button onClick={()=>fileRef.current?.click()} style={{
+        width:"100%", padding:"28px 20px", borderRadius:14,
+        border:`2px dashed ${B.amber}`, background:B.amberLight,
+        cursor:"pointer", textAlign:"center",
+      }}>
+        <p style={{fontSize:28, marginBottom:8}}>📊</p>
+        <p style={{fontSize:15, fontWeight:600, color:B.amberDark, marginBottom:4, fontFamily:"system-ui,-apple-system,sans-serif"}}>Upload your sales CSV</p>
+        <p style={{fontSize:13, color:B.warmGrey, fontFamily:"system-ui,-apple-system,sans-serif"}}>Square · Lightspeed · Xero · any daily sales export</p>
+      </button>
+      {error && <p style={{fontSize:13, color:B.danger, marginTop:12, fontFamily:"system-ui,-apple-system,sans-serif"}}>{error}</p>}
+      <button onClick={onSkip} style={{
+        width:"100%", marginTop:12, padding:"12px 0", borderRadius:12,
+        background:"transparent", border:`1.5px solid ${B.midGrey}`,
+        color:B.warmGrey, fontSize:14, fontWeight:600, cursor:"pointer",
+        fontFamily:"system-ui,-apple-system,sans-serif",
+      }}>Skip — I'll set ranges manually</button>
+    </div>
+  );
+
+  if (step === 1) return (
+    <div style={{textAlign:"center", padding:"32px 0"}}>
+      <div style={{width:40, height:40, borderRadius:"50%", border:`3px solid ${B.lightGrey}`, borderTopColor:B.amber, animation:"spin 0.8s linear infinite", margin:"0 auto 16px"}}/>
+      <p style={{fontSize:15, fontWeight:600, color:B.nearBlack, fontFamily:"system-ui,-apple-system,sans-serif"}}>Reading your sales data...</p>
+      <p style={{fontSize:13, color:B.warmGrey, fontFamily:"system-ui,-apple-system,sans-serif"}}>{fileName}</p>
+    </div>
+  );
+
+  if (step === 2 && analysis) {
+    const DAY_ORDER = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
+    const DAY_ABBR = {"Monday":"Mon","Tuesday":"Tue","Wednesday":"Wed","Thursday":"Thu","Friday":"Fri","Saturday":"Sat","Sunday":"Sun"};
+
+    return (
+      <div>
+        {/* Summary */}
+        <div style={{background:B.amber, borderRadius:16, padding:"16px 20px", marginBottom:20}}>
+          <p style={{fontSize:13, fontWeight:600, color:"rgba(255,255,255,0.8)", marginBottom:4, fontFamily:"system-ui,-apple-system,sans-serif", textTransform:"uppercase", letterSpacing:"0.06em"}}>
+            {analysis.dateFrom} → {analysis.dateTo}
+          </p>
+          <p style={{fontSize:28, fontWeight:700, color:B.white, fontFamily:"system-ui,-apple-system,sans-serif"}}>
+            ${analysis.totalSales.toLocaleString()}
+          </p>
+          <p style={{fontSize:13, color:"rgba(255,255,255,0.8)", fontFamily:"system-ui,-apple-system,sans-serif"}}>
+            {analysis.totalDays} trading days · avg ${analysis.dailyAvg.toLocaleString()}/day
+          </p>
+        </div>
+
+        {/* Per day breakdown */}
+        <p style={{fontSize:11, letterSpacing:"0.1em", color:B.warmGrey, fontFamily:"system-ui,-apple-system,sans-serif", textTransform:"uppercase", fontWeight:600, marginBottom:12}}>
+          What WageSave learned
+        </p>
+
+        {DAY_ORDER.filter(d => analysis.dayStats[d]).map(day => {
+          const stats = analysis.dayStats[day];
+          const maxVal = Math.max(...DAY_ORDER.filter(d=>analysis.dayStats[d]).map(d=>analysis.dayStats[d].avg));
+          const barWidth = Math.round((stats.avg / maxVal) * 100);
+          return (
+            <div key={day} style={{marginBottom:12, background:B.white, borderRadius:12, padding:"12px 14px", boxShadow:"0 1px 4px rgba(28,21,16,0.05)"}}>
+              <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6}}>
+                <p style={{fontSize:14, fontWeight:600, color:B.nearBlack, fontFamily:"system-ui,-apple-system,sans-serif"}}>{day}</p>
+                <p style={{fontSize:13, color:B.amber, fontWeight:600, fontFamily:"system-ui,-apple-system,sans-serif"}}>${stats.avg.toLocaleString()} avg</p>
+              </div>
+              {/* Mini bar chart */}
+              <div style={{height:6, background:B.lightGrey, borderRadius:3, marginBottom:6}}>
+                <div style={{height:"100%", width:`${barWidth}%`, background:B.amber, borderRadius:3}}/>
+              </div>
+              <div style={{display:"flex", justifyContent:"space-between"}}>
+                <p style={{fontSize:11, color:B.warmGrey, fontFamily:"system-ui,-apple-system,sans-serif"}}>Quiet: ${stats.p25.toLocaleString()}</p>
+                <p style={{fontSize:11, color:B.warmGrey, fontFamily:"system-ui,-apple-system,sans-serif"}}>{stats.count} data points</p>
+                <p style={{fontSize:11, color:B.warmGrey, fontFamily:"system-ui,-apple-system,sans-serif"}}>Busy: ${stats.p75.toLocaleString()}</p>
+              </div>
+            </div>
+          );
+        })}
+
+        {analysis.hasHourly && (
+          <div style={{background:B.amberLight, borderRadius:12, padding:"12px 14px", marginBottom:16, border:`1px solid ${B.midGrey}`}}>
+            <p style={{fontSize:13, fontWeight:600, color:B.amberDark, fontFamily:"system-ui,-apple-system,sans-serif", marginBottom:2}}>
+              📈 Hourly patterns detected
+            </p>
+            <p style={{fontSize:12, color:B.warmGrey, fontFamily:"system-ui,-apple-system,sans-serif"}}>
+              WageSave will use your peak trading hours to suggest better shift times.
+            </p>
+          </div>
+        )}
+
+        <button onClick={()=>onComplete(buildDayRevenueFromCSV(analysis), analysis)} style={{
+          width:"100%", padding:"16px 0", background:B.amber,
+          color:B.white, border:"none", borderRadius:14,
+          fontSize:16, fontWeight:700, cursor:"pointer",
+          fontFamily:"system-ui,-apple-system,sans-serif",
+          boxShadow:`0 4px 16px rgba(232,160,32,0.3)`,
+          marginBottom:10,
+        }}>
+          Apply to my venue →
+        </button>
+        <button onClick={onSkip} style={{
+          width:"100%", padding:"12px 0", borderRadius:12,
+          background:"transparent", border:`1.5px solid ${B.midGrey}`,
+          color:B.warmGrey, fontSize:14, fontWeight:600, cursor:"pointer",
+          fontFamily:"system-ui,-apple-system,sans-serif",
+        }}>Set ranges manually instead</button>
+      </div>
+    );
+  }
+
+  return null;
+}
+
 // ─── ONBOARDING ──────────────────────────────────────────────────────────────
 function Onboarding({onComplete}){
   const[step,setStep]=useState(0);
@@ -655,6 +936,7 @@ function Onboarding({onComplete}){
     quietRevenue:1200,busyRevenue:4500,
     tradingHours:{...DEFAULT_HOURS},
     dayRevenue:JSON.parse(JSON.stringify(DEFAULT_DAY_REVENUE)),
+    csvAnalysis:null,
   });
 
   const inputStyle={width:"100%",padding:"15px 16px",borderRadius:14,border:`1.5px solid ${B.midGrey}`,fontSize:16,fontFamily:"system-ui,-apple-system,sans-serif",color:B.nearBlack,background:B.white,outline:"none",boxSizing:"border-box",transition:"border-color 0.15s"};
@@ -797,12 +1079,20 @@ function Onboarding({onComplete}){
         );
       })}
 
-      <div style={{background:B.amberPale,borderRadius:16,padding:18,border:`1.5px dashed ${B.midGrey}`,marginBottom:28,marginTop:8}}>
+      {/* CSV Upload or manual */}
+      <div style={{background:B.amberPale,borderRadius:16,padding:18,border:`1.5px dashed ${B.midGrey}`,marginBottom:16,marginTop:8}}>
         <p style={{fontSize:14,fontWeight:600,color:B.nearBlack,marginBottom:4,fontFamily:"system-ui,-apple-system,sans-serif"}}>📊 Have last year's sales data?</p>
-        <p style={{fontSize:13,color:B.warmGrey,marginBottom:12,lineHeight:1.5,fontFamily:"system-ui,-apple-system,sans-serif"}}>Upload a CSV from Square, Lightspeed or Xero and WageSave learns your venue's patterns instantly.</p>
-        <AmberBtn label="Upload CSV →" onClick={finish} outline small/>
+        <p style={{fontSize:13,color:B.warmGrey,marginBottom:12,lineHeight:1.5,fontFamily:"system-ui,-apple-system,sans-serif"}}>
+          Upload a CSV from Square, Lightspeed or Xero — WageSave reads your real trading patterns and sets the ranges automatically.
+        </p>
+        <CSVUploader
+          onComplete={(dayRevenue, analysis)=>{
+            setData(d=>({...d, dayRevenue, csvAnalysis:analysis}));
+            finish();
+          }}
+          onSkip={finish}
+        />
       </div>
-      <AmberBtn label={`Set up ${data.name} →`} onClick={finish}/>
     </div>,
   ];
 
@@ -1567,9 +1857,18 @@ function VenueSettings({venue, baseRevenue, dayRevenue, localEvents, staff, onSt
       {/* Per-day revenue sliders */}
       <div style={sectionStyle}>
         <Label text={`Typical revenue per day — ${new Date().toLocaleString("en-AU",{month:"long"})}`}/>
-        <p style={{fontSize:12,color:B.warmGrey,marginBottom:16,fontFamily:"system-ui,-apple-system,sans-serif",lineHeight:1.5}}>
-          Slide each day to where it typically sits. WageSave adjusts for weather, events and school holidays on top.
+        <p style={{fontSize:12,color:B.warmGrey,marginBottom:12,fontFamily:"system-ui,-apple-system,sans-serif",lineHeight:1.5}}>
+          Slide each day to where it typically sits. Or upload a sales CSV to set ranges automatically.
         </p>
+        <div style={{marginBottom:16}}>
+          <CSVUploader
+            onComplete={(newDayRevenue)=>{
+              onDayRevenueChange(newDayRevenue);
+              setSaved(false);
+            }}
+            onSkip={()=>{}}
+          />
+        </div>
         {DAYS.map(day=>{
           const h=local.tradingHours[day];
           if(!h||!h.open) return null;
@@ -2533,6 +2832,7 @@ function MainApp({venue, onReset}){
   // Persist state to localStorage
   useEffect(()=>{try{localStorage.setItem("wagesave_actual",JSON.stringify(actual));}catch{}},[actual]);
   useEffect(()=>{try{localStorage.setItem("wagesave_day_revenue",JSON.stringify(dayRevenue));}catch{}},[dayRevenue]);
+  // csvAnalysis stored in venue object
   useEffect(()=>{try{localStorage.setItem("wagesave_local_events",JSON.stringify(localEvents));}catch{}},[localEvents]);
   useEffect(()=>{try{localStorage.setItem("wagesave_staff",JSON.stringify(staff));}catch{}},[staff]);
   useEffect(()=>{try{localStorage.setItem("wagesave_feedback",JSON.stringify(feedback));}catch{}},[feedback]);
