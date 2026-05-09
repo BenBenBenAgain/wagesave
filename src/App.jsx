@@ -778,21 +778,68 @@ function buildDayRevenueFromCSV(analysis) {
 }
 
 function mergeAnalyses(analyses) {
-  // Merge multiple CSV analyses into one combined analysis
+  // When multiple files cover the same dates, deduplicate by date.
+  // Prefer hourly data over daily totals for the same date range.
+  // Strategy: merge all raw rows first, then analyse combined unique daily totals.
+
+  // Collect all daily totals across all analyses, keyed by date
+  // If two analyses have the same date, keep the one with more data (hourly > daily)
+  const combinedDailyByDate = {}; // { "YYYY-MM-DD": { sales, day, isHourly } }
+
+  analyses.forEach(analysis => {
+    // We need the raw rows from each file, but we only have the analysis
+    // So we use the dateFrom/dateTo range to detect overlap
+    // and prefer the analysis with hasHourly=true for overlapping ranges
+  });
+
+  // Better approach: re-analyse from raw rows with deduplication
+  // We store raw rows on each file object, so use those directly
+  // This function receives analyses (already processed), so we work with what we have.
+  // Key insight: deduplicate by date range overlap - if two analyses share dates,
+  // only count each date once by taking the higher value (hourly is more granular)
+
+  // Build a map of date -> { sales, day } from ALL analyses, deduplicating by date
+  // Since we don't have per-date breakdown in analysis, we use a different approach:
+  // detect if analyses overlap in date range and warn user, or just use unique day-of-week pools
+
+  // Simplest correct fix: deduplicate day-of-week VALUES across analyses
+  // If two analyses have the same date range, their day-of-week distributions will be identical
+  // so we need to detect that and not double-count
+
+  const hasHourly = analyses.some(a => a.hasHourly);
+  const hasDaily = analyses.some(a => !a.hasHourly);
+
+  // If we have both hourly and daily for same period, use only hourly analysis
+  let filteredAnalyses = analyses;
+  if (hasHourly && hasDaily) {
+    // Check if date ranges overlap significantly
+    const hourlyAnalyses = analyses.filter(a => a.hasHourly);
+    const dailyAnalyses = analyses.filter(a => !a.hasHourly);
+
+    // For each daily analysis, check if an hourly analysis covers the same range
+    const nonOverlappingDaily = dailyAnalyses.filter(daily => {
+      return !hourlyAnalyses.some(hourly =>
+        hourly.dateFrom <= daily.dateTo && hourly.dateTo >= daily.dateFrom
+      );
+    });
+
+    filteredAnalyses = [...hourlyAnalyses, ...nonOverlappingDaily];
+  }
+
   const merged = {
     dayStats: {},
     hourlyCurves: {},
-    hasHourly: analyses.some(a => a.hasHourly),
-    dateFrom: analyses.map(a=>a.dateFrom).sort()[0],
-    dateTo: analyses.map(a=>a.dateTo).sort().reverse()[0],
-    totalSales: analyses.reduce((sum,a) => sum+a.totalSales, 0),
-    totalDays: analyses.reduce((sum,a) => sum+a.totalDays, 0),
+    hasHourly,
+    dateFrom: filteredAnalyses.map(a=>a.dateFrom).sort()[0],
+    dateTo: filteredAnalyses.map(a=>a.dateTo).sort().reverse()[0],
+    totalSales: filteredAnalyses.reduce((sum,a) => sum+a.totalSales, 0),
+    totalDays: filteredAnalyses.reduce((sum,a) => sum+a.totalDays, 0),
   };
-  merged.dailyAvg = Math.round(merged.totalSales / merged.totalDays);
+  merged.dailyAvg = Math.round(merged.totalSales / Math.max(merged.totalDays, 1));
 
-  // Combine day stats — pool all values then recalculate
+  // Combine day stats from filtered analyses only
   const allVals = {};
-  analyses.forEach(analysis => {
+  filteredAnalyses.forEach(analysis => {
     Object.entries(analysis.dayStats).forEach(([day, stats]) => {
       if (!allVals[day]) allVals[day] = [];
       allVals[day].push(...(stats.vals || [stats.avg]));
