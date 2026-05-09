@@ -869,6 +869,7 @@ function CSVUploader({ onComplete, onSkip }) {
   const [analysis, setAnalysis] = useState(null);
   const [files, setFiles] = useState([]); // [{name, rows}]
   const [processing, setProcessing] = useState(false);
+  const [fetchingWeather, setFetchingWeather] = useState(false);
   const fileRef = useRef(null);
 
   function readFile(file) {
@@ -906,6 +907,24 @@ function CSVUploader({ onComplete, onSkip }) {
       const combined = analyses.length === 1 ? analyses[0] : mergeAnalyses(analyses);
       setAnalysis(combined);
       setStep(2);
+
+      // Fetch historical weather in background for correlation
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(async pos => {
+          const lat = pos.coords.latitude;
+          const lon = pos.coords.longitude;
+          const dates = Object.keys(combined.dailyTotals||{});
+          if (dates.length === 0) return;
+
+          const weatherByDate = await fetchHistoricalWeather(dates, lat, lon);
+          if (Object.keys(weatherByDate).length > 0) {
+            const correlation = calculateWeatherMultipliers(combined.dailyTotals||{}, weatherByDate);
+            if (correlation) {
+              setAnalysis(prev => ({...prev, weatherCorrelation: correlation, weatherByDate}));
+            }
+          }
+        }, ()=>{}, {timeout:5000});
+      }
     } catch(err) {
       setError(err.message || "Something went wrong. Try exporting again from your POS.");
     }
@@ -1031,12 +1050,52 @@ function CSVUploader({ onComplete, onSkip }) {
         })}
 
         {analysis.hasHourly && (
-          <div style={{background:B.amberLight, borderRadius:12, padding:"12px 14px", marginBottom:16, border:`1px solid ${B.midGrey}`}}>
+          <div style={{background:B.amberLight, borderRadius:12, padding:"12px 14px", marginBottom:12, border:`1px solid ${B.midGrey}`}}>
             <p style={{fontSize:13, fontWeight:600, color:B.amberDark, fontFamily:"system-ui,-apple-system,sans-serif", marginBottom:2}}>
               📈 Hourly patterns detected
             </p>
             <p style={{fontSize:12, color:B.warmGrey, fontFamily:"system-ui,-apple-system,sans-serif"}}>
               WageSave will use your peak trading hours to suggest better shift times.
+            </p>
+          </div>
+        )}
+
+        {/* Weather correlation results */}
+        {analysis.weatherCorrelation ? (
+          <div style={{background:B.white, borderRadius:12, padding:"14px 16px", marginBottom:16, border:`1px solid ${B.lightGrey}`, boxShadow:"0 1px 4px rgba(28,21,16,0.05)"}}>
+            <p style={{fontSize:13, fontWeight:600, color:B.nearBlack, marginBottom:12, fontFamily:"system-ui,-apple-system,sans-serif"}}>
+              🌤 Weather impact on your venue
+            </p>
+            {Object.entries(analysis.weatherCorrelation.avgBySales).map(([cat, avg]) => {
+              const mult = analysis.weatherCorrelation.multipliers[cat];
+              const n = analysis.weatherCorrelation.sampleSizes[cat];
+              const icons = {beach:"🏖", sunny:"☀️", cloudy:"🌥", rain:"🌧"};
+              const labels = {beach:"Beach day", sunny:"Sunny", cloudy:"Cloudy", rain:"Rain"};
+              const color = mult >= 1.1 ? B.success : mult <= 0.9 ? B.danger : B.warmGrey;
+              return (
+                <div key={cat} style={{display:"flex", justifyContent:"space-between", alignItems:"center",
+                  paddingBottom:8, marginBottom:8, borderBottom:`1px solid ${B.lightGrey}`}}>
+                  <div style={{display:"flex", alignItems:"center", gap:8}}>
+                    <span style={{fontSize:18}}>{icons[cat]}</span>
+                    <div>
+                      <p style={{fontSize:13, fontWeight:600, color:B.nearBlack, fontFamily:"system-ui,-apple-system,sans-serif"}}>{labels[cat]}</p>
+                      <p style={{fontSize:11, color:B.warmGrey, fontFamily:"system-ui,-apple-system,sans-serif"}}>{n} days · avg ${avg.toLocaleString()}</p>
+                    </div>
+                  </div>
+                  <p style={{fontSize:14, fontWeight:700, color, fontFamily:"system-ui,-apple-system,sans-serif"}}>
+                    {mult >= 1 ? "+" : ""}{Math.round((mult-1)*100)}%
+                  </p>
+                </div>
+              );
+            })}
+            <p style={{fontSize:11, color:B.warmGrey, fontFamily:"system-ui,-apple-system,sans-serif"}}>
+              Based on your actual trading history. WageSave will use these instead of generic estimates.
+            </p>
+          </div>
+        ) : (
+          <div style={{background:B.amberPale, borderRadius:12, padding:"10px 14px", marginBottom:16}}>
+            <p style={{fontSize:12, color:B.warmGrey, fontFamily:"system-ui,-apple-system,sans-serif"}}>
+              🌤 Fetching historical weather to calculate your venue's weather sensitivity...
             </p>
           </div>
         )}
@@ -1070,6 +1129,101 @@ function CSVUploader({ onComplete, onSkip }) {
       })()}
     </div>
   );
+}
+
+// ─── WEATHER CORRELATION ENGINE ──────────────────────────────────────────────
+
+function weatherCategory(code, temp, precip) {
+  // Group weather into 4 categories for correlation
+  if (code === 0 && temp >= 22) return "beach";      // Perfect beach day
+  if (code === 0 && temp >= 18) return "sunny";       // Nice clear day
+  if (code <= 3 && precip < 1)  return "cloudy";     // Overcast but dry
+  return "rain";                                       // Rain/showers/storms
+}
+
+async function fetchHistoricalWeather(dates, lat, lon) {
+  // Fetch historical weather from Open-Meteo archive API
+  // dates is array of "YYYY-MM-DD" strings
+  if (!dates.length || !lat || !lon) return {};
+
+  const sorted = [...dates].sort();
+  const startDate = sorted[0];
+  const endDate = sorted[sorted.length - 1];
+
+  try {
+    const url = `https://archive-api.open-meteo.com/v1/archive?latitude=${lat}&longitude=${lon}&start_date=${startDate}&end_date=${endDate}&daily=weathercode,temperature_2m_max,precipitation_sum&timezone=Australia%2FMelbourne`;
+    const response = await fetch(url);
+    const data = await response.json();
+
+    if (!data.daily) return {};
+
+    const weatherByDate = {};
+    data.daily.time.forEach((date, i) => {
+      const code = data.daily.weathercode[i];
+      const temp = Math.round(data.daily.temperature_2m_max[i]);
+      const precip = data.daily.precipitation_sum[i] || 0;
+      weatherByDate[date] = {
+        code, temp, precip,
+        category: weatherCategory(code, temp, precip),
+      };
+    });
+
+    return weatherByDate;
+  } catch(err) {
+    console.warn("Historical weather fetch failed:", err);
+    return {};
+  }
+}
+
+function calculateWeatherMultipliers(dailyData, weatherByDate) {
+  // dailyData: { "YYYY-MM-DD": { sales, day } }
+  // weatherByDate: { "YYYY-MM-DD": { code, temp, precip, category } }
+  
+  const categories = { beach: [], sunny: [], cloudy: [], rain: [] };
+  
+  Object.entries(dailyData).forEach(([date, { sales, day }]) => {
+    const weather = weatherByDate[date];
+    if (!weather || !sales) return;
+    categories[weather.category].push(sales);
+  });
+
+  // Need at least 3 data points per category to be meaningful
+  const validCategories = Object.entries(categories).filter(([,vals]) => vals.length >= 2);
+  if (validCategories.length < 2) return null;
+
+  // Calculate average revenue per weather category
+  const avgBySales = {};
+  Object.entries(categories).forEach(([cat, vals]) => {
+    if (vals.length >= 2) {
+      avgBySales[cat] = Math.round(vals.reduce((a,b)=>a+b,0) / vals.length);
+    }
+  });
+
+  // Use "cloudy" or "sunny" as baseline (most common conditions)
+  const baselineCategory = avgBySales.cloudy ? "cloudy" : avgBySales.sunny ? "sunny" : null;
+  if (!baselineCategory) return null;
+
+  const baseline = avgBySales[baselineCategory];
+  const multipliers = {};
+  
+  Object.entries(avgBySales).forEach(([cat, avg]) => {
+    multipliers[cat] = Math.round((avg / baseline) * 100) / 100;
+  });
+
+  return {
+    multipliers,
+    baseline,
+    avgBySales,
+    sampleSizes: Object.fromEntries(
+      Object.entries(categories).map(([cat, vals]) => [cat, vals.length])
+    ),
+  };
+}
+
+function applyVenueWeatherMult(weatherCode, temp, precip, venueWeatherMults) {
+  if (!venueWeatherMults) return null; // Fall back to generic
+  const cat = weatherCategory(weatherCode || 0, temp || 18, precip || 0);
+  return venueWeatherMults.multipliers?.[cat] || null;
 }
 
 // ─── ONBOARDING ──────────────────────────────────────────────────────────────
@@ -1233,7 +1387,11 @@ function Onboarding({onComplete}){
         </p>
         <CSVUploader
           onComplete={(dayRevenue, analysis)=>{
-            setData(d=>({...d, dayRevenue, csvAnalysis:analysis}));
+            setData(d=>({...d,
+              dayRevenue,
+              csvAnalysis:analysis,
+              venueWeatherMults: analysis.weatherCorrelation || null,
+            }));
             finish();
           }}
           onSkip={finish}
@@ -2008,8 +2166,13 @@ function VenueSettings({venue, baseRevenue, dayRevenue, localEvents, staff, onSt
         </p>
         <div style={{marginBottom:16}}>
           <CSVUploader
-            onComplete={(newDayRevenue)=>{
+            onComplete={(newDayRevenue, analysis)=>{
               onDayRevenueChange(newDayRevenue);
+              if(analysis?.weatherCorrelation) {
+                // Update venue with new weather multipliers
+                const updated = {...venue, venueWeatherMults: analysis.weatherCorrelation};
+                try{localStorage.setItem("wagesave_venue", JSON.stringify(updated));}catch{}
+              }
               setSaved(false);
             }}
             onSkip={()=>{}}
@@ -3007,7 +3170,14 @@ function MainApp({venue, onReset}){
     const eventMult=flags.reduce((acc,f)=>{const p=parseFloat((f.impact||"0").replace("%",""))/100;return acc*(1+p);},1.0);
     const dk=dateKey(date);
     const dayForecast=forecast[dk];
-    const dayWeatherMult=dayForecast?dayForecast.mult:weatherMult;
+    // Use venue-specific weather multiplier if available, otherwise generic
+    let dayWeatherMult = weatherMult;
+    if(dayForecast) {
+      const venueSpecific = venue?.venueWeatherMults
+        ? applyVenueWeatherMult(dayForecast.code, dayForecast.temp, dayForecast.precip||0, venue.venueWeatherMults)
+        : null;
+      dayWeatherMult = venueSpecific !== null ? venueSpecific : dayForecast.mult;
+    }
     const dayWeatherLabel=dayForecast?dayForecast.label:weather?.label;
     const dayTemp=dayForecast?dayForecast.temp:weather?.temp;
     const dayData=calcDay(day,baseRevenue,venue.hasKitchen,venue.servesAlcohol,venue.tradingHours,venue.seasonality,dayWeatherMult,eventMult,weekVar,date,dayRevenue);
