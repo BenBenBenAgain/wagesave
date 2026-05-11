@@ -1275,9 +1275,9 @@ function calculateWeatherMultipliers(dailyData, weatherByDate) {
     multipliers,
     baseline,
     avgBySales,
-    sampleSizes: Object.fromEntries(
-      Object.entries(categories).map(([cat, vals]) => [cat, vals.length])
-    ),
+    sampleSizes: Object.entries(categories).reduce((acc, [cat, vals]) => {
+      acc[cat] = vals.length; return acc;
+    }, {}),
   };
 }
 
