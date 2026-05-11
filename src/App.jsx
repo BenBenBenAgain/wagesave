@@ -2416,7 +2416,6 @@ function isStaffAvailable(member, day, date) {
 }
 
 function shiftMatchesPref(shift, prefs) {
-  // Accept both string (legacy) and array
   const prefArr = Array.isArray(prefs) ? prefs : [prefs||"flexible"];
   if (prefArr.includes("flexible")) return true;
   return prefArr.some(pref => {
@@ -2425,6 +2424,31 @@ function shiftMatchesPref(shift, prefs) {
     if (pref === "mid")     return shift.start >= 9 && shift.start <= 14;
     return true;
   });
+}
+
+function shiftPrefScore(shift, prefs) {
+  // Returns a score: positive = good match, negative = bad match
+  const prefArr = Array.isArray(prefs) ? prefs : [prefs||"flexible"];
+  if (prefArr.includes("flexible")) return 0; // neutral
+
+  let best = -999;
+  prefArr.forEach(pref => {
+    if (pref === "opener") {
+      // Openers love early shifts, hate late starts
+      const score = shift.start <= 9 ? 12 : shift.start <= 11 ? 6 : shift.start >= 15 ? -15 : 0;
+      best = Math.max(best, score);
+    }
+    if (pref === "closer") {
+      // Closers love late shifts, strongly penalised for early starts
+      const score = shift.start >= 15 ? 12 : shift.start >= 12 ? 8 : shift.start <= 9 ? -15 : -5;
+      best = Math.max(best, score);
+    }
+    if (pref === "mid") {
+      const score = shift.start >= 9 && shift.start <= 14 ? 10 : -5;
+      best = Math.max(best, score);
+    }
+  });
+  return best === -999 ? 0 : best;
 }
 
 function generateRoster(weekData, staff, tradingHours) {
@@ -2519,7 +2543,7 @@ function generateRoster(weekData, staff, tradingHours) {
       // Add small weekly rotation bonus to break ties differently each week
       const scored = candidates.map(member => {
         const abilityLevel = getEffectiveAbility(member, role);
-        const prefMatch = shiftMatchesPref(shift, member.shiftPreferences || member.shiftPreference || "flexible") ? 10 : 0;
+        const prefMatch = shiftPrefScore(shift, member.shiftPreferences || member.shiftPreference || "flexible");
         const hasPreferredDays = (member.preferredDays||[]).length > 0;
         const dayPref = hasPreferredDays
           ? (member.preferredDays.includes(day) ? 8 : -6)
