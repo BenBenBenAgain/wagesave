@@ -260,14 +260,21 @@ function calcShifts(roles, hours, day=null, staggerCurves=null) {
   // Use CSV-derived stagger times if available for this day
   const dayCurve = staggerCurves && day ? staggerCurves[day] : null;
 
+  // Helper — get the i'th stagger window for a given count, or null if no CSV
+  function curveWindow(count, i) {
+    const windows = dayCurve?.[count];
+    if (!windows || !windows[i]) return null;
+    const [s, e] = windows[i];
+    return [s, e];
+  }
+
   roles.roles.forEach(({role, count}) => {
-    // Get curve windows for this count if available
-    const curveWindows = dayCurve?.[count] || null;
     for (let i = 0; i < count; i++) {
+      const w = curveWindow(count, i);
 
       if (role === "Kitchen") {
-        // Use curve window for kitchen day shift end time if available
-        const kitchenEnd = (curveWindows && curveWindows[0]) ? curveWindows[0][1] : close;
+        // Kitchen always opens with the venue (prep, deliveries) — curve only
+        // adjusts the END time of a no-dinner kitchen shift.
         if (hasDinner && count >= 2) {
           if (i === 0) shifts.push({role, start:open, end:close, label:"Kitchen"});
           else shifts.push({role, start:dinnerOpen-1, end:dinnerClose, label:"Kitchen (dinner)"});
@@ -275,18 +282,21 @@ function calcShifts(roles, hours, day=null, staggerCurves=null) {
           shifts.push({role, start:open, end:close, label:"Kitchen (day)"});
           shifts.push({role, start:dinnerOpen-1, end:dinnerClose, label:"Kitchen (dinner)"});
         } else {
-          shifts.push({role, start:open, end:kitchenEnd, label:"Kitchen"});
+          const end = w ? w[1] : close;
+          shifts.push({role, start:open, end, label:"Kitchen"});
         }
 
       } else if (role === "Coffee") {
-        // Coffee: first person opens and covers morning peak
-        // Second person starts mid-morning to cover lunch
-        const coffeeEnd = Math.min(close, open + 5);
-        if (i === 0) shifts.push({role, start:open, end:coffeeEnd, label:"Coffee"});
-        else shifts.push({role, start:open+2, end:Math.min(close, open+7), label:"Coffee"});
+        if (w) {
+          shifts.push({role, start:w[0], end:w[1], label:"Coffee"});
+        } else {
+          // fallback when no CSV
+          const coffeeEnd = Math.min(close, open + 5);
+          if (i === 0) shifts.push({role, start:open, end:coffeeEnd, label:"Coffee"});
+          else shifts.push({role, start:open+2, end:Math.min(close, open+7), label:"Coffee"});
+        }
 
       } else if (role === "Coffee & Floor") {
-        // Single person — covers the full day service
         shifts.push({role, start:open, end:close, label:"Coffee & Floor"});
 
       } else if (role === "Floor") {
@@ -294,32 +304,31 @@ function calcShifts(roles, hours, day=null, staggerCurves=null) {
           shifts.push({role, start:open, end:close, label:"Floor"});
           if(hasDinner) shifts.push({role, start:dinnerOpen, end:dinnerClose, label:"Floor (dinner)"});
 
+        } else if (w && !hasDinner) {
+          // Use CSV curve for non-dinner days (Mon/Tue/Wed/Thu/Sun mostly)
+          shifts.push({role, start:w[0], end:w[1], label:"Floor"});
+
         } else if (count === 2) {
           if (hasDinner) {
-            // Opener covers morning through lunch, second covers afternoon and dinner
             shifts.push({role, start:open, end:postLunch, label:"Floor"});
             shifts.push({role, start:dinnerOpen, end:dinnerClose, label:"Floor (dinner)"});
           } else {
-            // Opener covers morning peak, closer starts mid-morning stays til end
             shifts.push({role, start:open, end:Math.round(open+dayLen*0.65), label:"Floor"});
             shifts.push({role, start:midDay, end:close, label:"Floor"});
           }
 
         } else if (count === 3) {
           if (hasDinner) {
-            // Three floor on a dinner service day — proper stagger
-            shifts.push({role, start:open, end:postLunch, label:"Floor"});           // morning
-            shifts.push({role, start:midDay, end:close, label:"Floor"});              // mid through afternoon
-            shifts.push({role, start:dinnerOpen, end:dinnerClose, label:"Floor (dinner)"}); // dinner
+            shifts.push({role, start:open, end:postLunch, label:"Floor"});
+            shifts.push({role, start:midDay, end:close, label:"Floor"});
+            shifts.push({role, start:dinnerOpen, end:dinnerClose, label:"Floor (dinner)"});
           } else {
-            // Three floor, day only — triangle shape
             shifts.push({role, start:open, end:Math.round(open+dayLen*0.6), label:"Floor"});
             shifts.push({role, start:open+1, end:close, label:"Floor"});
             shifts.push({role, start:midDay, end:close, label:"Floor"});
           }
 
         } else {
-          // 4+ floor — full stagger across the day
           shifts.push({role, start:open, end:postLunch, label:"Floor"});
           shifts.push({role, start:open+1, end:Math.round(open+dayLen*0.7), label:"Floor"});
           shifts.push({role, start:midDay, end:close, label:"Floor"});
@@ -327,16 +336,16 @@ function calcShifts(roles, hours, day=null, staggerCurves=null) {
         }
 
       } else if (role === "Bar") {
-        // Bar only needed from midday or dinner onwards
         const barStart = hasDinner ? dinnerOpen : Math.max(midDay, open+2);
         const barEnd = hasDinner ? dinnerClose : close;
         shifts.push({role, start:barStart, end:barEnd, label:"Bar"});
 
       } else if (role === "All-rounder") {
-        // Note: the forEach loop already iterates i=0,1 for count=2
-        // So we push ONE shift per iteration, not the full pattern at once
         if (count === 1) {
           shifts.push({role, start:open, end:close, label:"All-rounder"});
+        } else if (w) {
+          // Use CSV curve for All-rounder when available
+          shifts.push({role, start:w[0], end:w[1], label:"All-rounder"});
         } else if (count === 2) {
           const openerEnd   = Math.round(open + dayLen * 0.60);
           const closerStart = Math.round(open + dayLen * 0.35);
@@ -350,15 +359,28 @@ function calcShifts(roles, hours, day=null, staggerCurves=null) {
       }
     }
   });
+
+  // ── OPENER MINIMUM OVERRIDE ───────────────────────────────────────────────
+  // The door has to open. If the CSV pushed everyone's start past trading open
+  // (because sales data showed zero/low demand in the first hour or two), pull
+  // the earliest shift back to `open` so someone is there to unlock and set up.
+  if (shifts.length > 0) {
+    const dayShifts = shifts.filter(s => s.start < (hasDinner ? dinnerOpen : close));
+    if (dayShifts.length > 0) {
+      const earliest = dayShifts.reduce((a, b) => a.start <= b.start ? a : b);
+      if (earliest.start > open) {
+        earliest.start = open;
+      }
+    }
+  }
+
   // Dinner service minimum — always need at least 2 people for dinner
   if (hasDinner) {
     const dinnerShifts = shifts.filter(s => s.start >= dinnerOpen);
     if (dinnerShifts.length === 0) {
-      // No dinner shifts at all — add Kitchen + Floor
       shifts.push({role:"Kitchen", start:dinnerOpen, end:dinnerClose, label:"Kitchen (dinner)"});
       shifts.push({role:"Floor",   start:dinnerOpen, end:dinnerClose, label:"Floor (dinner)"});
     } else if (dinnerShifts.length === 1) {
-      // Only 1 dinner shift — add a second
       const hasKitchen = dinnerShifts.some(s => s.role === "Kitchen");
       shifts.push({
         role: hasKitchen ? "Floor" : "Kitchen",
@@ -902,12 +924,17 @@ function analyseCSVData(rows) {
     return windows;
   }
 
+  // Build stagger curves per day. Late-trading days (Fri/Sat) extend the
+  // window to 10pm so dinner-service shifts get curves too. Other days
+  // use the day-trading window only. calcShifts handles the dinner gap separately.
   Object.entries(avgHourlyCurves).forEach(([fullDay, hours]) => {
     const abbr = DAY_MAP_ABBR[fullDay];
     if (!abbr) return;
     staggerCurves[abbr] = {};
+    const isLateDay = fullDay === "Friday" || fullDay === "Saturday";
+    const closeHour = isLateDay ? 22 : 15;
     for (let n = 1; n <= 6; n++) {
-      staggerCurves[abbr][n] = getShiftWindows(hours, n, 8, 15);
+      staggerCurves[abbr][n] = getShiftWindows(hours, n, 8, closeHour);
     }
   });
 
@@ -919,6 +946,8 @@ function analyseCSVData(rows) {
   return {
     dayStats,
     hourlyCurves: avgHourlyCurves,
+    staggerCurves,            // ← exposed so calcShifts can use real demand curves
+    dailyTotals,              // ← exposed for weather correlation downstream
     hasHourly: hasTime,
     dateFrom: dates[0],
     dateTo: dates[dates.length-1],
@@ -1002,9 +1031,20 @@ function mergeAnalyses(analyses) {
     filteredAnalyses = [...hourlyAnalyses, ...nonOverlappingDaily];
   }
 
+  // Prefer stagger curves from the first hourly analysis (most granular).
+  // Without this, the merged result loses the curves and calcShifts falls
+  // back to hardcoded "everyone starts at open" timing.
+  const firstHourly = filteredAnalyses.find(a => a.hasHourly && a.staggerCurves);
+  const mergedDailyTotals = {};
+  filteredAnalyses.forEach(a => {
+    if (a.dailyTotals) Object.assign(mergedDailyTotals, a.dailyTotals);
+  });
+
   const merged = {
     dayStats: {},
     hourlyCurves: {},
+    staggerCurves: firstHourly?.staggerCurves || null,
+    dailyTotals: mergedDailyTotals,
     hasHourly,
     dateFrom: filteredAnalyses.map(a=>a.dateFrom).sort()[0],
     dateTo: filteredAnalyses.map(a=>a.dateTo).sort().reverse()[0],
@@ -1587,7 +1627,8 @@ function Onboarding({onComplete}){
             setData(d=>({...d,
               dayRevenue,
               csvAnalysis:analysis,
-              venueWeatherMults: analysis.weatherCorrelation || null,
+              staggerCurves: analysis?.staggerCurves || null,
+              venueWeatherMults: analysis?.weatherCorrelation || null,
               csvMeta: {
                 dateFrom: analysis?.dateFrom,
                 dateTo: analysis?.dateTo,
@@ -2423,16 +2464,14 @@ function VenueSettings({venue, baseRevenue, dayRevenue, localEvents, staff, csvM
                 uploadedAt: new Date().toISOString(),
               };
               onCsvMetaChange(meta);
-              // Save stagger curves to venue
-              if (analysis?.staggerCurves) {
-                try {
-                  const stored = JSON.parse(localStorage.getItem("wagesave_venue")||"{}");
-                  localStorage.setItem("wagesave_venue", JSON.stringify({
-                    ...stored,
-                    staggerCurves: analysis.staggerCurves,
-                  }));
-                } catch {}
-              }
+              // Persist stagger curves + weather mults into venue STATE
+              // (not just localStorage) so the next render uses them.
+              // This was the broken bit — writing only to disk meant React
+              // never knew, so the home view kept showing 8am-everyone starts.
+              const venueUpdates = {...venue, csvMeta: meta};
+              if (analysis?.staggerCurves) venueUpdates.staggerCurves = analysis.staggerCurves;
+              if (analysis?.weatherCorrelation) venueUpdates.venueWeatherMults = analysis.weatherCorrelation;
+              onVenueUpdate(venueUpdates);
             }}
             onSkip={()=>{}}
           />
