@@ -3395,8 +3395,8 @@ function MainApp({venue, onReset}){
             onBaseRevenueChange={setBaseRevenue}
             onVenueUpdate={v=>{
               const updated={...venue,...v};
+              setVenue(updated);
               try{localStorage.setItem("wagesave_venue",JSON.stringify(updated));}catch{}
-              window.location.reload();
             }}
             onReset={onReset}
           />
