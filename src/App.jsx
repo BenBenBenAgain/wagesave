@@ -310,26 +310,37 @@ function calcShifts(roles, hours) {
         // So we push ONE shift per iteration, not the full pattern at once
         if (count === 1) {
           shifts.push({role, start:open, end:close, label:"All-rounder"});
-          if (hasDinner) shifts.push({role, start:dinnerOpen, end:dinnerClose, label:"All-rounder (dinner)"});
         } else if (count === 2) {
           const openerEnd   = Math.round(open + dayLen * 0.60);
           const closerStart = Math.round(open + dayLen * 0.35);
-          if (i === 0) {
-            shifts.push({role, start:open, end:openerEnd, label:"All-rounder"});
-          }
-          if (i === 1) {
-            shifts.push({role, start:closerStart, end:close, label:"All-rounder"});
-            if (hasDinner) shifts.push({role, start:dinnerOpen, end:dinnerClose, label:"All-rounder (dinner)"});
-          }
+          if (i === 0) shifts.push({role, start:open, end:openerEnd, label:"All-rounder"});
+          if (i === 1) shifts.push({role, start:closerStart, end:close, label:"All-rounder"});
         } else if (count >= 3) {
           const starts = [open, Math.round(open+dayLen*0.2), Math.round(open+dayLen*0.45)];
           const ends   = [Math.round(open+dayLen*0.55), Math.round(open+dayLen*0.75), close];
           if (i < 3) shifts.push({role, start:starts[i], end:ends[i], label:"All-rounder"});
-          if (i === 2 && hasDinner) shifts.push({role, start:dinnerOpen, end:dinnerClose, label:"All-rounder (dinner)"});
         }
       }
     }
   });
+  // Dinner service minimum — always need at least 2 people for dinner
+  if (hasDinner) {
+    const dinnerShifts = shifts.filter(s => s.start >= dinnerOpen);
+    if (dinnerShifts.length === 0) {
+      // No dinner shifts at all — add Kitchen + Floor
+      shifts.push({role:"Kitchen", start:dinnerOpen, end:dinnerClose, label:"Kitchen (dinner)"});
+      shifts.push({role:"Floor",   start:dinnerOpen, end:dinnerClose, label:"Floor (dinner)"});
+    } else if (dinnerShifts.length === 1) {
+      // Only 1 dinner shift — add a second
+      const hasKitchen = dinnerShifts.some(s => s.role === "Kitchen");
+      shifts.push({
+        role: hasKitchen ? "Floor" : "Kitchen",
+        start: dinnerOpen, end: dinnerClose,
+        label: hasKitchen ? "Floor (dinner)" : "Kitchen (dinner)"
+      });
+    }
+  }
+
   return shifts;
 }
 
