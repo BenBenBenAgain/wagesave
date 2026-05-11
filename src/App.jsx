@@ -203,21 +203,43 @@ const DEFAULT_DAY_REVENUE = {
 
 // ─── ROLE MODEL ───────────────────────────────────────────────────────────────
 function calcRoles(rev, hasKitchen, servesAlcohol) {
-  if (rev < 1500) return {roles:[{role:"All-rounder",count:2}],total:2,note:"Two covering all bases"};
-  if (rev < 3000) {
-    if (hasKitchen) return {roles:[{role:"Kitchen",count:1},{role:"Coffee & Floor",count:1},{role:"Floor",count:1}],total:3,note:"Roles starting to split"};
+  // Thresholds calibrated to real Barry's data
+  // < $800: quiet day — Mon/Thu level
+  if (rev < 800) return {roles:[{role:"All-rounder",count:2}],total:2,note:"Two covering all bases"};
+
+  // $800-$1,200: steady day — roles start to split
+  if (rev < 1200) {
+    if (hasKitchen) return {roles:[{role:"Kitchen",count:1},{role:"Coffee & Floor",count:1}],total:2,note:"Roles starting to split"};
+    return {roles:[{role:"Coffee & Floor",count:2}],total:2,note:"Two covering all bases"};
+  }
+
+  // $1,200-$1,800: solid day — 3 staff, defined roles (Thu/Fri morning level)
+  if (rev < 1800) {
+    if (hasKitchen) return {roles:[{role:"Kitchen",count:1},{role:"Coffee",count:1},{role:"Floor",count:1}],total:3,note:"Roles starting to split"};
     return {roles:[{role:"Coffee",count:1},{role:"Floor",count:2}],total:3,note:"Busy café floor"};
   }
-  if (rev < 5000) {
+
+  // $1,800-$2,500: busy day — 4 staff (Sun/big Fri level)
+  if (rev < 2500) {
     if (hasKitchen) return {roles:[{role:"Kitchen",count:1},{role:"Coffee",count:1},{role:"Floor",count:2}],total:4,note:"Full service team"};
     return {roles:[{role:"Coffee",count:1},{role:"Floor",count:2},...(servesAlcohol?[{role:"Bar",count:1}]:[])],total:servesAlcohol?4:3,note:"Peak café service"};
   }
-  if (rev < 7000) {
+
+  // $2,500-$4,000: big day — 5 staff (big Sun/Sat morning)
+  if (rev < 4000) {
+    if (hasKitchen) return {roles:[{role:"Kitchen",count:1},{role:"Coffee",count:1},{role:"Floor",count:2},{role:"Floor",count:1}],total:5,note:"Big day — all stations"};
+    return {roles:[{role:"Coffee",count:2},{role:"Floor",count:3}],total:5,note:"Big day — all stations"};
+  }
+
+  // $4,000-$6,000: massive day — 6 staff (big Sat)
+  if (rev < 6000) {
     return {
       roles:[...(hasKitchen?[{role:"Kitchen",count:2}]:[]),{role:"Coffee",count:1},{role:"Floor",count:2},...(servesAlcohol?[{role:"Bar",count:1}]:[])],
-      total:(hasKitchen?2:0)+3+(servesAlcohol?1:0),note:"Big day — all stations"
+      total:(hasKitchen?2:0)+3+(servesAlcohol?1:0),note:"Full house"
     };
   }
+
+  // $6,000+: peak trading
   return {
     roles:[...(hasKitchen?[{role:"Kitchen",count:2}]:[]),{role:"Coffee",count:2},{role:"Floor",count:3},...(servesAlcohol?[{role:"Bar",count:1}]:[])],
     total:(hasKitchen?2:0)+5+(servesAlcohol?1:0),note:"Peak trading — all hands"
