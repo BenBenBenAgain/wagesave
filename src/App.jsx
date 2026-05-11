@@ -2275,8 +2275,9 @@ function VenueSettings({venue, baseRevenue, dayRevenue, localEvents, staff, onSt
         <div style={{marginBottom:16}}>
           <CSVUploader
             onComplete={(newDayRevenue, analysis)=>{
+              // Save day revenue first
               onDayRevenueChange(newDayRevenue);
-              // Update venue state AND localStorage with CSV meta
+              // Then update venue with CSV meta — no page reload
               const updated = {
                 ...venue,
                 csvMeta: {
