@@ -2489,10 +2489,19 @@ function generateRoster(weekData, staff, tradingHours) {
         if (r === "Coffee & Floor") return Math.min(member.roles?.Coffee||0, member.roles?.Floor||0) > 0
           ? Math.round(((member.roles?.Coffee||0) + (member.roles?.Floor||0)) / 2)
           : 0;
-        if (r === "All-rounder") return Math.max(
-          member.roles?.Coffee||0, member.roles?.Floor||0,
-          member.roles?.Kitchen||0, member.roles?.Bar||0
-        );
+        if (r === "All-rounder") {
+          // All-rounder on a day with kitchen requires at least some kitchen ability
+          // Check if the venue has a kitchen by looking at the shift label
+          const hasKitchenAbility = (member.roles?.Kitchen||0) > 0;
+          const floorCoffeeAbility = Math.max(member.roles?.Coffee||0, member.roles?.Floor||0);
+          // If they have no kitchen ability, they can still do All-rounder on non-kitchen days
+          // but score lower so kitchen-capable staff get priority
+          if (!hasKitchenAbility) return floorCoffeeAbility > 0 ? 1 : 0; // Low score, not zero
+          return Math.max(
+            member.roles?.Coffee||0, member.roles?.Floor||0,
+            member.roles?.Kitchen||0, member.roles?.Bar||0
+          );
+        }
         return member.roles?.[r] || 0;
       }
 
