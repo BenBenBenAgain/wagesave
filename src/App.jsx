@@ -2151,7 +2151,7 @@ function AddEventForm({onAdd}){
 }
 
 // ─── VENUE SETTINGS ──────────────────────────────────────────────────────────
-function VenueSettings({venue, baseRevenue, dayRevenue, localEvents, staff, onStaffChange, onLocalEventsChange, onDayRevenueChange, onBaseRevenueChange, onVenueUpdate, onReset}){
+function VenueSettings({venue, baseRevenue, dayRevenue, localEvents, staff, csvMeta, onCsvMetaChange, onStaffChange, onLocalEventsChange, onDayRevenueChange, onBaseRevenueChange, onVenueUpdate, onReset}){
   const[local,setLocal]=useState({...venue});
   const[saved,setSaved]=useState(false);
 
@@ -2240,27 +2240,27 @@ function VenueSettings({venue, baseRevenue, dayRevenue, localEvents, staff, onSt
         <Label text={`Typical revenue per day — ${new Date().toLocaleString("en-AU",{month:"long"})}`}/>
 
         {/* Show uploaded CSV status */}
-        {venue?.csvMeta ? (
+        {csvMeta ? (
           <div style={{background:B.successLight,borderRadius:12,padding:"12px 14px",marginBottom:12,border:`1px solid ${B.success}22`}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
               <div>
                 <p style={{fontSize:13,fontWeight:600,color:B.success,marginBottom:4,fontFamily:"system-ui,-apple-system,sans-serif"}}>
                   📊 Data from your CSV
                 </p>
-                {(venue.csvMeta.fileNames||[]).map((name,i)=>(
+                {(csvMeta.fileNames||[]).map((name,i)=>(
                   <p key={i} style={{fontSize:12,color:B.warmGrey,fontFamily:"system-ui,-apple-system,sans-serif",marginBottom:1}}>
                     📄 {name}
                   </p>
                 ))}
                 <p style={{fontSize:12,color:B.warmGrey,marginTop:4,fontFamily:"system-ui,-apple-system,sans-serif"}}>
-                  {venue.csvMeta.dateFrom} → {venue.csvMeta.dateTo}
+                  {csvMeta.dateFrom} → {csvMeta.dateTo}
                 </p>
                 <p style={{fontSize:12,color:B.warmGrey,fontFamily:"system-ui,-apple-system,sans-serif"}}>
-                  {venue.csvMeta.totalDays} trading days · avg ${(venue.csvMeta.dailyAvg||0).toLocaleString()}/day
+                  {csvMeta.totalDays} trading days · avg ${(csvMeta.dailyAvg||0).toLocaleString()}/day
                 </p>
-                {venue.csvMeta.uploadedAt&&(
+                {csvMeta.uploadedAt&&(
                   <p style={{fontSize:11,color:B.midGrey,marginTop:2,fontFamily:"system-ui,-apple-system,sans-serif"}}>
-                    Uploaded {new Date(venue.csvMeta.uploadedAt).toLocaleDateString("en-AU",{day:"numeric",month:"long",year:"numeric"})}
+                    Uploaded {new Date(csvMeta.uploadedAt).toLocaleDateString("en-AU",{day:"numeric",month:"long",year:"numeric"})}
                   </p>
                 )}
                 {venue.venueWeatherMults&&(
@@ -2280,10 +2280,8 @@ function VenueSettings({venue, baseRevenue, dayRevenue, localEvents, staff, onSt
         <div style={{marginBottom:16}}>
           <CSVUploader
             onComplete={(newDayRevenue, analysis)=>{
-              // Save day revenue ranges
               onDayRevenueChange(newDayRevenue);
-              // Save CSV meta directly to localStorage and trigger venue update
-              const csvMeta = {
+              const meta = {
                 dateFrom: analysis?.dateFrom,
                 dateTo: analysis?.dateTo,
                 totalDays: analysis?.totalDays,
@@ -2291,15 +2289,7 @@ function VenueSettings({venue, baseRevenue, dayRevenue, localEvents, staff, onSt
                 fileNames: analysis?.fileNames || [],
                 uploadedAt: new Date().toISOString(),
               };
-              const venueWeatherMults = analysis?.weatherCorrelation || venue.venueWeatherMults;
-              // Update local state so status card shows immediately
-              setLocal(l=>({...l, csvMeta, venueWeatherMults}));
-              // Persist to localStorage directly
-              try{
-                const stored = JSON.parse(localStorage.getItem("wagesave_venue")||"{}");
-                localStorage.setItem("wagesave_venue", JSON.stringify({...stored, csvMeta, venueWeatherMults}));
-              }catch{}
-              setSaved(false);
+              onCsvMetaChange(meta);
             }}
             onSkip={()=>{}}
           />
@@ -3219,6 +3209,7 @@ function MainApp({venue, onVenueChange, onReset}){
   const[dayRevenue,setDayRevenue]=useState(()=>{ try{const s=localStorage.getItem("wagesave_day_revenue");return s?JSON.parse(s):venue.dayRevenue||{...DEFAULT_DAY_REVENUE}}catch{return venue.dayRevenue||{...DEFAULT_DAY_REVENUE}}});
   const[localEvents,setLocalEvents]=useState(()=>{ try{const s=localStorage.getItem("wagesave_local_events");return s?JSON.parse(s):[...DEFAULT_LOCAL_EVENTS]}catch{return[...DEFAULT_LOCAL_EVENTS]}});
   const[staff,setStaff]=useState(()=>{ try{const s=localStorage.getItem("wagesave_staff");return s?JSON.parse(s):[]}catch{return[]}});
+  const[csvMeta,setCsvMeta]=useState(()=>{ try{const s=localStorage.getItem("wagesave_csv_meta");return s?JSON.parse(s):null}catch{return null}});
 
   useEffect(()=>{
     if(!navigator.geolocation) return;
@@ -3270,6 +3261,7 @@ function MainApp({venue, onVenueChange, onReset}){
   // csvAnalysis stored in venue object
   useEffect(()=>{try{localStorage.setItem("wagesave_local_events",JSON.stringify(localEvents));}catch{}},[localEvents]);
   useEffect(()=>{try{localStorage.setItem("wagesave_staff",JSON.stringify(staff));}catch{}},[staff]);
+  useEffect(()=>{try{if(csvMeta)localStorage.setItem("wagesave_csv_meta",JSON.stringify(csvMeta));}catch{}},[csvMeta]);
   useEffect(()=>{try{localStorage.setItem("wagesave_feedback",JSON.stringify(feedback));}catch{}},[feedback]);
   useEffect(()=>{try{localStorage.setItem("wagesave_base_revenue",String(baseRevenue));}catch{}},[baseRevenue]);
 
@@ -3397,6 +3389,8 @@ function MainApp({venue, onVenueChange, onReset}){
             dayRevenue={dayRevenue}
             localEvents={localEvents}
             staff={staff}
+            csvMeta={csvMeta}
+            onCsvMetaChange={setCsvMeta}
             onStaffChange={setStaff}
             onLocalEventsChange={setLocalEvents}
             onDayRevenueChange={setDayRevenue}
