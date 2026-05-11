@@ -895,8 +895,27 @@ function analyseCSVData(rows) {
       return [[openTime, closeTime]];
     }
 
+    // Find the FIRST hour with meaningful demand (5% of peak).
+    // This is where customers actually start arriving — not just when
+    // the door is unlocked. Without this, every shift was forced to
+    // start at openTime regardless of when trade actually began.
+    const peakDemand = Math.max(...hours.map(([,d]) => d));
+    const minDemandThreshold = peakDemand * 0.05;
+    let demandStart = openTime;
+    for (const [h, d] of hours) {
+      if (d >= minDemandThreshold) { demandStart = h; break; }
+    }
+
+    // Find the LAST hour with meaningful demand — same idea for closing.
+    let demandEnd = closeTime;
+    for (let i = hours.length - 1; i >= 0; i--) {
+      const [h, d] = hours[i];
+      if (d >= minDemandThreshold) { demandEnd = Math.min(closeTime, h + 1); break; }
+    }
+
+    // Split the demand window (not the trading window) into chunks
     const chunkSize = totalDemand / nStaff;
-    const chunkStarts = [openTime];
+    const chunkStarts = [demandStart];
     const chunkEnds = [];
     let cum = 0;
 
@@ -909,12 +928,12 @@ function analyseCSVData(rows) {
         chunkEnds.push(h + 1); // +1 hour overlap
       }
     }
-    chunkEnds.push(closeTime);
+    chunkEnds.push(demandEnd);
 
     const windows = [];
     for (let i = 0; i < nStaff; i++) {
-      const start = chunkStarts[i] !== undefined ? chunkStarts[i] : closeTime - 3;
-      let end = chunkEnds[i] !== undefined ? chunkEnds[i] : closeTime;
+      const start = chunkStarts[i] !== undefined ? chunkStarts[i] : demandEnd - 3;
+      let end = chunkEnds[i] !== undefined ? chunkEnds[i] : demandEnd;
       // Minimum 4 hour shift
       if (end - start < 4) end = Math.min(closeTime, start + 4);
       // Don't exceed close
@@ -1184,6 +1203,7 @@ function CSVResults({analysis, files, fileRef, onComplete, onSkip}){
         }}>+ Add more CSV files</button>
 
         <button onClick={()=>{
+          alert("Apply button clicked — handler is running");
           try {
             console.log("Apply clicked, analysis:", analysis);
             const dayRev = buildDayRevenueFromCSV(analysis);
@@ -1192,6 +1212,7 @@ function CSVResults({analysis, files, fileRef, onComplete, onSkip}){
             console.log("Calling onComplete with:", result);
             onComplete(dayRev, result);
             console.log("onComplete called successfully");
+            alert("Apply complete — check your home screen for updated shifts");
           } catch(err) {
             console.error("Apply error:", err);
             alert("Error applying: " + err.message);
