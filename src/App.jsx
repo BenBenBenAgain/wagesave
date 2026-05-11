@@ -3189,7 +3189,7 @@ function RosterView({weekData, staff, onClose, venueName, weekLabel, weekOffset,
 }
 
 // ─── MAIN APP ────────────────────────────────────────────────────────────────
-function MainApp({venue, onReset}){
+function MainApp({venue, onVenueChange, onReset}){
   const[weekOffset,setWeekOffset]=useState(0);
   const[selectedDay,setSelectedDay]=useState(null);
   const[actual,setActual]=useState(()=>{ try{const s=localStorage.getItem("wagesave_actual");return s?JSON.parse(s):{}}catch{return{}}});
@@ -3395,7 +3395,7 @@ function MainApp({venue, onReset}){
             onBaseRevenueChange={setBaseRevenue}
             onVenueUpdate={v=>{
               const updated={...venue,...v};
-              setVenue(updated);
+              onVenueChange(updated);
               try{localStorage.setItem("wagesave_venue",JSON.stringify(updated));}catch{}
             }}
             onReset={onReset}
@@ -3979,7 +3979,7 @@ export default function WageSave(){
   );
 
   // Returning user — go straight to app
-  if(venue) return<MainApp venue={venue} onReset={handleReset}/>;
+  if(venue) return<MainApp venue={venue} onVenueChange={setVenue} onReset={handleReset}/>;
 
   // Analyse mode
   if(mode==="analyse") return(
