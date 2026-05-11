@@ -1020,7 +1020,10 @@ function CSVResults({analysis, files, fileRef, onComplete, onSkip}){
           fontFamily:"system-ui,-apple-system,sans-serif",
         }}>+ Add more CSV files</button>
 
-        <button onClick={()=>onComplete(buildDayRevenueFromCSV(analysis), analysis)} style={{
+        <button onClick={()=>onComplete(buildDayRevenueFromCSV(analysis), {
+          ...analysis,
+          fileNames: files.map(f=>f.name),
+        })} style={{
           width:"100%", padding:"16px 0", background:B.amber,
           color:B.white, border:"none", borderRadius:14,
           fontSize:16, fontWeight:700, cursor:"pointer",
@@ -1457,6 +1460,7 @@ function Onboarding({onComplete}){
                 dateTo: analysis?.dateTo,
                 totalDays: analysis?.totalDays,
                 dailyAvg: analysis?.dailyAvg,
+                fileNames: analysis?.fileNames || [],
                 uploadedAt: new Date().toISOString(),
               },
             }));
@@ -2235,10 +2239,15 @@ function VenueSettings({venue, baseRevenue, dayRevenue, localEvents, staff, onSt
           <div style={{background:B.successLight,borderRadius:12,padding:"12px 14px",marginBottom:12,border:`1px solid ${B.success}22`}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
               <div>
-                <p style={{fontSize:13,fontWeight:600,color:B.success,marginBottom:2,fontFamily:"system-ui,-apple-system,sans-serif"}}>
+                <p style={{fontSize:13,fontWeight:600,color:B.success,marginBottom:4,fontFamily:"system-ui,-apple-system,sans-serif"}}>
                   📊 Data from your CSV
                 </p>
-                <p style={{fontSize:12,color:B.warmGrey,fontFamily:"system-ui,-apple-system,sans-serif"}}>
+                {(venue.csvMeta.fileNames||[]).map((name,i)=>(
+                  <p key={i} style={{fontSize:12,color:B.warmGrey,fontFamily:"system-ui,-apple-system,sans-serif",marginBottom:1}}>
+                    📄 {name}
+                  </p>
+                ))}
+                <p style={{fontSize:12,color:B.warmGrey,marginTop:4,fontFamily:"system-ui,-apple-system,sans-serif"}}>
                   {venue.csvMeta.dateFrom} → {venue.csvMeta.dateTo}
                 </p>
                 <p style={{fontSize:12,color:B.warmGrey,fontFamily:"system-ui,-apple-system,sans-serif"}}>
@@ -2267,7 +2276,7 @@ function VenueSettings({venue, baseRevenue, dayRevenue, localEvents, staff, onSt
           <CSVUploader
             onComplete={(newDayRevenue, analysis)=>{
               onDayRevenueChange(newDayRevenue);
-              // Save CSV meta + weather multipliers to venue
+              // Update venue state AND localStorage with CSV meta
               const updated = {
                 ...venue,
                 csvMeta: {
@@ -2275,11 +2284,12 @@ function VenueSettings({venue, baseRevenue, dayRevenue, localEvents, staff, onSt
                   dateTo: analysis?.dateTo,
                   totalDays: analysis?.totalDays,
                   dailyAvg: analysis?.dailyAvg,
+                  fileNames: analysis?.fileNames || [],
                   uploadedAt: new Date().toISOString(),
                 },
                 venueWeatherMults: analysis?.weatherCorrelation || venue.venueWeatherMults,
               };
-              try{localStorage.setItem("wagesave_venue", JSON.stringify(updated));}catch{}
+              onVenueUpdate(updated);
               setSaved(false);
             }}
             onSkip={()=>{}}
