@@ -1143,10 +1143,20 @@ function CSVResults({analysis, files, fileRef, onComplete, onSkip}){
           fontFamily:"system-ui,-apple-system,sans-serif",
         }}>+ Add more CSV files</button>
 
-        <button onClick={()=>onComplete(buildDayRevenueFromCSV(analysis), {
-          ...analysis,
-          fileNames: files.map(f=>f.name),
-        })} style={{
+        <button onClick={()=>{
+          try {
+            console.log("Apply clicked, analysis:", analysis);
+            const dayRev = buildDayRevenueFromCSV(analysis);
+            console.log("Built day revenue:", dayRev);
+            const result = {...analysis, fileNames: files.map(f=>f.name)};
+            console.log("Calling onComplete with:", result);
+            onComplete(dayRev, result);
+            console.log("onComplete called successfully");
+          } catch(err) {
+            console.error("Apply error:", err);
+            alert("Error applying: " + err.message);
+          }
+        }} style={{
           width:"100%", padding:"16px 0", background:B.amber,
           color:B.white, border:"none", borderRadius:14,
           fontSize:16, fontWeight:700, cursor:"pointer",
