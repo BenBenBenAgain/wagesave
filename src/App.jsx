@@ -2155,6 +2155,11 @@ function VenueSettings({venue, baseRevenue, dayRevenue, localEvents, staff, onSt
   const[local,setLocal]=useState({...venue});
   const[saved,setSaved]=useState(false);
 
+  // Sync local state if venue prop changes externally
+  useEffect(()=>{
+    setLocal(l=>({...l, csvMeta:venue.csvMeta, venueWeatherMults:venue.venueWeatherMults}));
+  },[venue.csvMeta, venue.venueWeatherMults]);
+
   function updateVenueHours(day,key,val){
     setLocal(d=>({...d,tradingHours:{...d.tradingHours,[day]:{...d.tradingHours[day],[key]:val}}}));
     setSaved(false);
@@ -2275,22 +2280,25 @@ function VenueSettings({venue, baseRevenue, dayRevenue, localEvents, staff, onSt
         <div style={{marginBottom:16}}>
           <CSVUploader
             onComplete={(newDayRevenue, analysis)=>{
-              // Save day revenue first
+              // Save day revenue ranges
               onDayRevenueChange(newDayRevenue);
-              // Then update venue with CSV meta — no page reload
-              const updated = {
-                ...venue,
-                csvMeta: {
-                  dateFrom: analysis?.dateFrom,
-                  dateTo: analysis?.dateTo,
-                  totalDays: analysis?.totalDays,
-                  dailyAvg: analysis?.dailyAvg,
-                  fileNames: analysis?.fileNames || [],
-                  uploadedAt: new Date().toISOString(),
-                },
-                venueWeatherMults: analysis?.weatherCorrelation || venue.venueWeatherMults,
+              // Save CSV meta directly to localStorage and trigger venue update
+              const csvMeta = {
+                dateFrom: analysis?.dateFrom,
+                dateTo: analysis?.dateTo,
+                totalDays: analysis?.totalDays,
+                dailyAvg: analysis?.dailyAvg,
+                fileNames: analysis?.fileNames || [],
+                uploadedAt: new Date().toISOString(),
               };
-              onVenueUpdate(updated);
+              const venueWeatherMults = analysis?.weatherCorrelation || venue.venueWeatherMults;
+              // Update local state so status card shows immediately
+              setLocal(l=>({...l, csvMeta, venueWeatherMults}));
+              // Persist to localStorage directly
+              try{
+                const stored = JSON.parse(localStorage.getItem("wagesave_venue")||"{}");
+                localStorage.setItem("wagesave_venue", JSON.stringify({...stored, csvMeta, venueWeatherMults}));
+              }catch{}
               setSaved(false);
             }}
             onSkip={()=>{}}
