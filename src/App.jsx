@@ -249,28 +249,33 @@ function calcRoles(rev, hasKitchen, servesAlcohol) {
 // ─── SHIFT TIMING — staggered, demand-aware ─────────────────────────────────
 // Core principle: build up to peak, wind down after.
 // Not everyone starts at open or stays to close.
-function calcShifts(roles, hours) {
+function calcShifts(roles, hours, day=null, staggerCurves=null) {
   if (!hours || !hours.open) return [];
   const {openTime:open, closeTime:close, hasDinner, dinnerOpen, dinnerClose} = hours;
   const dayLen = close - open;
-  const midDay = Math.round(open + dayLen * 0.4);  // ~11am-12pm for most venues
-  const postLunch = Math.round(open + dayLen * 0.55); // ~1-2pm
+  const midDay = Math.round(open + dayLen * 0.4);
+  const postLunch = Math.round(open + dayLen * 0.55);
   const shifts = [];
 
+  // Use CSV-derived stagger times if available for this day
+  const dayCurve = staggerCurves && day ? staggerCurves[day] : null;
+
   roles.roles.forEach(({role, count}) => {
+    // Get curve windows for this count if available
+    const curveWindows = dayCurve?.[count] || null;
     for (let i = 0; i < count; i++) {
 
       if (role === "Kitchen") {
+        // Use curve window for kitchen day shift end time if available
+        const kitchenEnd = (curveWindows && curveWindows[0]) ? curveWindows[0][1] : close;
         if (hasDinner && count >= 2) {
-          // Day kitchen + dinner kitchen — different people, staggered
           if (i === 0) shifts.push({role, start:open, end:close, label:"Kitchen"});
           else shifts.push({role, start:dinnerOpen-1, end:dinnerClose, label:"Kitchen (dinner)"});
         } else if (hasDinner) {
-          // One kitchen person — split shift
           shifts.push({role, start:open, end:close, label:"Kitchen (day)"});
           shifts.push({role, start:dinnerOpen-1, end:dinnerClose, label:"Kitchen (dinner)"});
         } else {
-          shifts.push({role, start:open, end:close, label:"Kitchen"});
+          shifts.push({role, start:open, end:kitchenEnd, label:"Kitchen"});
         }
 
       } else if (role === "Coffee") {
@@ -381,7 +386,7 @@ function formatShiftEnd(endHour, tradingHours, day) {
   return formatHour(endHour);
 }
 
-function calcDay(day, baseRev, hasKitchen, servesAlcohol, tradingHours, seasonality, weatherMult=1.0, eventMult=1.0, weekVar=1.0, date, dayRevenue=null) {
+function calcDay(day, baseRev, hasKitchen, servesAlcohol, tradingHours, seasonality, weatherMult=1.0, eventMult=1.0, weekVar=1.0, date, dayRevenue=null, staggerCurves=null) {
   const h = tradingHours[day];
   if (!h || !h.open) return {adj:0,laborBudget:0,byHour:new Array(24).fill(0),roles:{roles:[],total:0,note:"Closed today"},shifts:[],closed:true};
 
@@ -417,7 +422,7 @@ function calcDay(day, baseRev, hasKitchen, servesAlcohol, tradingHours, seasonal
   const sum = curve.reduce((a,b)=>a+b,0);
   const byHour = curve.map(v=>sum>0?Math.max(0,Math.round((v/sum)*totalHours)):0);
   const roles = calcRoles(adj, hasKitchen, servesAlcohol);
-  const shifts = calcShifts(roles, h);
+  const shifts = calcShifts(roles, h, day, staggerCurves);
 
   // Peak cover — max staff on floor at any one time
   // Derived from roles model: total roles active at peak service period
@@ -826,6 +831,84 @@ function analyseCSVData(rows) {
     Object.entries(hours).forEach(([hour, vals]) => {
       avgHourlyCurves[day][hour] = Math.round(vals.reduce((a,b)=>a+b,0) / vals.length);
     });
+  });
+
+  // Calculate optimal stagger start times from demand curve
+  function getStaggerTimesFromCurve(dayHours, nStaff, openTime, closeTime) {
+    const hours = [];
+    for (let h = openTime; h < closeTime; h++) {
+      hours.push([h, dayHours[h] || 0]);
+    }
+    const totalDemand = hours.reduce((s,[,d])=>s+d, 0);
+    if (totalDemand === 0 || nStaff <= 1) {
+      const step = Math.round((closeTime - openTime) / Math.max(nStaff,1));
+      return Array.from({length:nStaff},(_,i)=>openTime + i*step);
+    }
+    const starts = [openTime];
+    const thresholds = Array.from({length:nStaff-1},(_,i)=>totalDemand*(i+1)/nStaff);
+    let cum = 0, ti = 0;
+    for (const [h, d] of hours) {
+      cum += d;
+      while (ti < thresholds.length && cum >= thresholds[ti]) {
+        starts.push(h);
+        ti++;
+      }
+      if (ti >= thresholds.length) break;
+    }
+    while (starts.length < nStaff) starts.push(closeTime - 1);
+    return starts.sort((a,b)=>a-b).slice(0, nStaff);
+  }
+
+  // Store shift windows (start + end) per day for each staffing level (1-6 staff)
+  const staggerCurves = {};
+  const DAY_MAP_ABBR = {Thursday:"Thu",Friday:"Fri",Saturday:"Sat",Sunday:"Sun",Monday:"Mon",Tuesday:"Tue",Wednesday:"Wed"};
+
+  function getShiftWindows(dayHours, nStaff, openTime, closeTime) {
+    const hours = [];
+    for (let h = openTime; h <= closeTime; h++) {
+      hours.push([h, dayHours[h] || 0]);
+    }
+    const totalDemand = hours.reduce((s,[,d])=>s+d, 0);
+    if (totalDemand === 0 || nStaff <= 1) {
+      return [[openTime, closeTime]];
+    }
+
+    const chunkSize = totalDemand / nStaff;
+    const chunkStarts = [openTime];
+    const chunkEnds = [];
+    let cum = 0;
+
+    for (const [h, d] of hours) {
+      cum += d;
+      if (chunkStarts.length < nStaff && cum >= chunkSize * chunkStarts.length) {
+        chunkStarts.push(h);
+      }
+      if (chunkEnds.length < nStaff - 1 && cum >= chunkSize * (chunkEnds.length + 1)) {
+        chunkEnds.push(h + 1); // +1 hour overlap
+      }
+    }
+    chunkEnds.push(closeTime);
+
+    const windows = [];
+    for (let i = 0; i < nStaff; i++) {
+      const start = chunkStarts[i] !== undefined ? chunkStarts[i] : closeTime - 3;
+      let end = chunkEnds[i] !== undefined ? chunkEnds[i] : closeTime;
+      // Minimum 4 hour shift
+      if (end - start < 4) end = Math.min(closeTime, start + 4);
+      // Don't exceed close
+      end = Math.min(end, closeTime);
+      windows.push([start, end]);
+    }
+    return windows;
+  }
+
+  Object.entries(avgHourlyCurves).forEach(([fullDay, hours]) => {
+    const abbr = DAY_MAP_ABBR[fullDay];
+    if (!abbr) return;
+    staggerCurves[abbr] = {};
+    for (let n = 1; n <= 6; n++) {
+      staggerCurves[abbr][n] = getShiftWindows(hours, n, 8, 15);
+    }
   });
 
   // Total and date range
@@ -2330,6 +2413,16 @@ function VenueSettings({venue, baseRevenue, dayRevenue, localEvents, staff, csvM
                 uploadedAt: new Date().toISOString(),
               };
               onCsvMetaChange(meta);
+              // Save stagger curves to venue
+              if (analysis?.staggerCurves) {
+                try {
+                  const stored = JSON.parse(localStorage.getItem("wagesave_venue")||"{}");
+                  localStorage.setItem("wagesave_venue", JSON.stringify({
+                    ...stored,
+                    staggerCurves: analysis.staggerCurves,
+                  }));
+                } catch {}
+              }
             }}
             onSkip={()=>{}}
           />
@@ -3283,6 +3376,7 @@ function MainApp({venue, onVenueChange, onReset}){
   const[localEvents,setLocalEvents]=useState(()=>{ try{const s=localStorage.getItem("wagesave_local_events");return s?JSON.parse(s):[...DEFAULT_LOCAL_EVENTS]}catch{return[...DEFAULT_LOCAL_EVENTS]}});
   const[staff,setStaff]=useState(()=>{ try{const s=localStorage.getItem("wagesave_staff");return s?JSON.parse(s):[]}catch{return[]}});
   const[csvMeta,setCsvMeta]=useState(()=>{ try{const s=localStorage.getItem("wagesave_csv_meta");return s?JSON.parse(s):null}catch{return null}});
+  // staggerCurves comes from venue object (saved when CSV applied)
 
   useEffect(()=>{
     if(!navigator.geolocation) return;
@@ -3371,7 +3465,7 @@ function MainApp({venue, onVenueChange, onReset}){
     }
     const dayWeatherLabel=dayForecast?dayForecast.label:weather?.label;
     const dayTemp=dayForecast?dayForecast.temp:weather?.temp;
-    const dayData=calcDay(day,baseRevenue,venue.hasKitchen,venue.servesAlcohol,venue.tradingHours,venue.seasonality,dayWeatherMult,eventMult,weekVar,date,dayRevenue);
+    const dayData=calcDay(day,baseRevenue,venue.hasKitchen,venue.servesAlcohol,venue.tradingHours,venue.seasonality,dayWeatherMult,eventMult,weekVar,date,dayRevenue,venue.staggerCurves||null);
     // Add weather flag if forecast shows rain or beach day
     if(dayForecast&&dayForecast.mult!==1.0&&!flags.some(f=>f.label&&f.label.includes("Rain")||false)){
       if(dayForecast.mult<1.0) flags.push({icon:"🌧",label:dayWeatherLabel||"Rain",impact:`${Math.round((dayForecast.mult-1)*100)}%`,mult:dayForecast.mult});
